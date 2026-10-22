@@ -1283,5 +1283,42 @@ if (variable_global_exists(""car_data"") && is_array(global.car_data)
 }
 ");
 
+
+// ---- CAMBIOS 7 E 8 MARCHAS ----
+// razoes: cambio 8 = 7 marchas, cambio 9 = 8 marchas. max_gears sai do array_length,
+// entao troca, automatico, HUD e IA (que copia as razoes do jogador) ja funcionam.
+g.QueueFindReplace("gml_Object_obj_player_Create_0", "max_gears = array_length(gear_ratios);", "if (global.car_data[global.vehicles_array].cambio == 8)\n{\n    gear_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];\n    original_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];\n}\nelse if (global.car_data[global.vehicles_array].cambio == 9)\n{\n    gear_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];\n    original_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];\n}\nmax_gears = array_length(gear_ratios);", false);
+
+// nomes: 7 terminadores cobrem as 5 tabelas (case "cambio" indexado por cambio-1,
+// GetPartLevelsArray/2 e GetNamePartsVenture/2 indexados por nivel)
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"GSD 6 marchas\"]", "\"GSD 6 marchas\", \"Manual 7 marchas\", \"Manual 8 marchas\"]", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"6-speed GSD\"]", "\"6-speed GSD\", \"7-speed Manual\", \"8-speed Manual\"]", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"GSD 6 marce\"]", "\"GSD 6 marce\", \"Manuale 7 marce\", \"Manuale 8 marce\"]", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"GSD 6 rapports\"]", "\"GSD 6 rapports\", \"Manuelle 7 rapports\", \"Manuelle 8 rapports\"]", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"6速自动\", \"GSD 6速\"]", "\"6速自动\", \"GSD 6速\", \"7速手动\", \"8速手动\"]", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"6速オートマ\", \"GSD 6速\"]", "\"6速オートマ\", \"GSD 6速\", \"7速マニュアル\", \"8速マニュアル\"]", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "\"GSD 6-ст.\"]", "\"GSD 6-ст.\", \"7-ст. механика\", \"8-ст. механика\"]", true);
+
+// precos: nivel 10 = 45.000, nivel 11 = 85.000 (as duas tabelas paralelas)
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "[250, 750, 1500, 6500, 10500, 17500, 16750, 23450, 32500, 65000]", "[250, 750, 1500, 6500, 10500, 17500, 16750, 23450, 32500, 65000, 45000, 85000]", false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "[250, 750, 6500, 6500, 10500, 17500, 16750, 23450, 32500, 65000]", "[250, 750, 6500, 6500, 10500, 17500, 16750, 23450, 32500, 65000, 45000, 85000]", false);
+
+// item no banco de inventario
+g.QueueFindReplace("gml_GlobalScript_Inventory", "_r(\"gsd_6m\", \"GSD 6 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");", "_r(\"gsd_6m\", \"GSD 6 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");\n_r(\"manual_7m\", \"Manual 7 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");\n_r(\"manual_8m\", \"Manual 8 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");", false);
+
+// instalacao pelo minigame (manual: at = 0)
+g.QueueFindReplace("gml_GlobalScript_minigames_noguiintech", "case \"gsd_6m\":\n                    _cambio_val = 7;\n                    _car.at = 1;\n                    break;", "case \"gsd_6m\":\n                    _cambio_val = 7;\n                    _car.at = 1;\n                    break;\n                case \"manual_7m\":\n                    _cambio_val = 8;\n                    _car.at = 0;\n                    break;\n                case \"manual_8m\":\n                    _cambio_val = 9;\n                    _car.at = 0;\n                    break;", false);
+
+// entrega: (categoria 6, nivel 10/11) -> id do item
+g.QueueFindReplace("gml_GlobalScript_Delivery", "case 9:\n                    return \"gsd_6m\";", "case 9:\n                    return \"gsd_6m\";\n                case 10:\n                    return \"manual_7m\";\n                case 11:\n                    return \"manual_8m\";", false);
+
+// caderno de marchas: 8 linhas nao podem invadir o texto de custo
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
+    "var _start_y = _notebook_y - 80;",
+    "var _start_y = _notebook_y - 80 - ((obj_player.max_gears > 6) ? 18 : 0);", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
+    "var _spacing = 35;",
+    "var _spacing = (obj_player.max_gears > 6) ? 26 : 35;", false);
+
 g.Import();
 ScriptMessage("MARK distribuidor=v2 instalado");

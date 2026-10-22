@@ -1128,6 +1128,71 @@ if (variable_global_exists("car_data") && is_array(global.car_data)
 def csx_str(s):
     return '@"' + s.replace('"', '""') + '"'
 
+# ---- cambios 7 e 8 marchas: textos dos patches ----
+# _cq transforma GML normal (newline real, aspas) em literal C# de uma linha
+def _cq(t):
+    return t.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+CR_OLD = "max_gears = array_length(gear_ratios);"
+CR_NEW = _cq("""if (global.car_data[global.vehicles_array].cambio == 8)
+{
+    gear_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];
+    original_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];
+}
+else if (global.car_data[global.vehicles_array].cambio == 9)
+{
+    gear_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];
+    original_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];
+}
+max_gears = array_length(gear_ratios);""")
+
+IT_OLD = _cq('_r("gsd_6m", "GSD 6 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");')
+IT_NEW = _cq("""_r("gsd_6m", "GSD 6 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");
+_r("manual_7m", "Manual 7 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");
+_r("manual_8m", "Manual 8 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");""")
+
+MG_OLD = _cq("""case "gsd_6m":
+                    _cambio_val = 7;
+                    _car.at = 1;
+                    break;""")
+MG_NEW = _cq("""case "gsd_6m":
+                    _cambio_val = 7;
+                    _car.at = 1;
+                    break;
+                case "manual_7m":
+                    _cambio_val = 8;
+                    _car.at = 0;
+                    break;
+                case "manual_8m":
+                    _cambio_val = 9;
+                    _car.at = 0;
+                    break;""")
+
+DL_OLD = _cq("""case 9:
+                    return "gsd_6m";""")
+DL_NEW = _cq("""case 9:
+                    return "gsd_6m";
+                case 10:
+                    return "manual_7m";
+                case 11:
+                    return "manual_8m";""")
+
+PV_OLD = "[250, 750, 1500, 6500, 10500, 17500, 16750, 23450, 32500, 65000]"
+PV_NEW = "[250, 750, 1500, 6500, 10500, 17500, 16750, 23450, 32500, 65000, 45000, 85000]"
+PV2_OLD = "[250, 750, 6500, 6500, 10500, 17500, 16750, 23450, 32500, 65000]"
+PV2_NEW = "[250, 750, 6500, 6500, 10500, 17500, 16750, 23450, 32500, 65000, 45000, 85000]"
+
+# terminadores de idioma -> nomes novos (replace_all)
+NOMES = [
+    ('"GSD 6 marchas"]',          '"GSD 6 marchas", "Manual 7 marchas", "Manual 8 marchas"]'),
+    ('"6-speed GSD"]',            '"6-speed GSD", "7-speed Manual", "8-speed Manual"]'),
+    ('"GSD 6 marce"]',            '"GSD 6 marce", "Manuale 7 marce", "Manuale 8 marce"]'),
+    ('"GSD 6 rapports"]',         '"GSD 6 rapports", "Manuelle 7 rapports", "Manuelle 8 rapports"]'),
+    ('"6速自动", "GSD 6速"]',      '"6速自动", "GSD 6速", "7速手动", "8速手动"]'),
+    ('"6速オートマ", "GSD 6速"]',   '"6速オートマ", "GSD 6速", "7速マニュアル", "8速マニュアル"]'),
+    ('"GSD 6-ст."]',              '"GSD 6-ст.", "7-ст. механика", "8-ст. механика"]'),
+]
+
 PATCH = f'''using System;
 using UndertaleModLib;
 using UndertaleModLib.Models;
@@ -1293,6 +1358,43 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
     false);
 
 g.QueueAppend("gml_Object_obj_noguiin_Draw_64", {csx_str(GML_DRAW)});
+
+
+// ---- CAMBIOS 7 E 8 MARCHAS ----
+// razoes: cambio 8 = 7 marchas, cambio 9 = 8 marchas. max_gears sai do array_length,
+// entao troca, automatico, HUD e IA (que copia as razoes do jogador) ja funcionam.
+g.QueueFindReplace("gml_Object_obj_player_Create_0", "{CR_OLD}", "{CR_NEW}", false);
+
+// nomes: 7 terminadores cobrem as 5 tabelas (case "cambio" indexado por cambio-1,
+// GetPartLevelsArray/2 e GetNamePartsVenture/2 indexados por nivel)
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[0][0])}", "{_cq(NOMES[0][1])}", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[1][0])}", "{_cq(NOMES[1][1])}", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[2][0])}", "{_cq(NOMES[2][1])}", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[3][0])}", "{_cq(NOMES[3][1])}", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[4][0])}", "{_cq(NOMES[4][1])}", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[5][0])}", "{_cq(NOMES[5][1])}", true);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{_cq(NOMES[6][0])}", "{_cq(NOMES[6][1])}", true);
+
+// precos: nivel 10 = 45.000, nivel 11 = 85.000 (as duas tabelas paralelas)
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{PV_OLD}", "{PV_NEW}", false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts", "{PV2_OLD}", "{PV2_NEW}", false);
+
+// item no banco de inventario
+g.QueueFindReplace("gml_GlobalScript_Inventory", "{IT_OLD}", "{IT_NEW}", false);
+
+// instalacao pelo minigame (manual: at = 0)
+g.QueueFindReplace("gml_GlobalScript_minigames_noguiintech", "{MG_OLD}", "{MG_NEW}", false);
+
+// entrega: (categoria 6, nivel 10/11) -> id do item
+g.QueueFindReplace("gml_GlobalScript_Delivery", "{DL_OLD}", "{DL_NEW}", false);
+
+// caderno de marchas: 8 linhas nao podem invadir o texto de custo
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
+    "var _start_y = _notebook_y - 80;",
+    "var _start_y = _notebook_y - 80 - ((obj_player.max_gears > 6) ? 18 : 0);", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
+    "var _spacing = 35;",
+    "var _spacing = (obj_player.max_gears > 6) ? 26 : 35;", false);
 
 g.Import();
 ScriptMessage("MARK distribuidor=v2 instalado");

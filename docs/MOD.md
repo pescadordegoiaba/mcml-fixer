@@ -17,6 +17,7 @@ Duas partes independentes que compartilham o mesmo menu:
 ## 1. Onde o mod se pendura no código nativo
 
 
+
 Três pontos de solda, todos por `QueueFindReplace` com âncora única verificada
 (nada de byte-patch de bytecode):
 
@@ -46,6 +47,7 @@ propaga para tudo que lê torque: aceleração, dinamômetro e HUD. E publicar
 ---
 
 ## 2. Física do distribuidor
+
 
 
 ### Avanço total
@@ -119,6 +121,7 @@ sobe a temperatura.
 ## 3. Potência real (torque × rpm)
 
 
+
 Até aqui, `hp` e `torque` eram duas curvas independentes, ambas escritas à mão.
 Agora `hp` é **derivado** do torque instantâneo e do giro — a relação física
 `P = T · ω` — e é esse valor que o jogo usa para acelerar.
@@ -180,6 +183,7 @@ a curva antiga. O carro passa a precisar de giro para render.
 ---
 
 ## 4. Motor: um só lugar para todo upgrade
+
 
 
 Antes, cada peça era aplicada em pontos diferentes do Step — e a maioria em lugares
@@ -269,6 +273,7 @@ Consequências:
 ## 5. Carburador: circuitos novos
 
 
+
 O jogo já modela `gicle`, `gicle_2nd` (segundo corpo) e oito tipos de
 carburador, com `_gicle_ideal` e `_sensibilidade` por tipo, e converte o
 desvio em AFR:
@@ -329,7 +334,52 @@ Pobre perde muito mais que rico.
 
 ---
 
-## 6. Punições por tunar: removidas
+## 6. Câmbios de 7 e 8 marchas
+
+Dois câmbios novos, usando o caminho nativo do jogo (`car.cambio`).
+
+| `car.cambio` | Câmbio | Razões | Preço (nível na loja) |
+|---|---|---|---|
+| 8 | Manual 7 marchas | `9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7` | $45.000 (nível 10) |
+| 9 | Manual 8 marchas | `9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55` | $85.000 (nível 11) |
+
+Teto de velocidade a 6000 rpm (`rpm / razão * 60 / 1000`):
+
+| Marcha | 7m | 8m |
+|---|---|---|
+| 1 | 38,5 | 38,5 |
+| 2 | 58,1 | 56,3 |
+| 3 | 80,0 | 73,5 |
+| 4 | 102,9 | 94,7 |
+| 5 | 130,9 | 120,0 |
+| 6 | 167,4 | 150,0 |
+| 7 | 211,8 | 189,5 |
+| 8 | — | 232,3 |
+
+**Por que só o array basta:** `max_gears = array_length(gear_ratios)` (recalculado em
+`obj_player Create`), a troca manual e o automático usam `global.gear < max_gears`, o
+limite de giro é `rpm / gear_ratios[gear-1]` e a IA copia as razões do jogador
+(`obj_judge Draw`). Nada disso tem "6" cravado.
+
+**Onde está cada peça** (todas as 5 tabelas de nome precisam dos 2 itens, senão
+`array_get` estoura o índice):
+
+- razões: `obj_player Create`, logo antes de `max_gears = array_length(gear_ratios)`
+- nomes da loja: `GetPartLevelsArray` (case 12), `GetPartLevelsArray2` (case 6),
+  `GetNamePartsVenture` (case 12), `GetNamePartsVenture2` (case 6) — 8 idiomas
+- nome na ficha do carro: `GetNameParts` (case `"cambio"`, índice `cambio - 1`)
+- preços: `GetPartValue` (case 12) e `GetPartValue2` (case 6)
+- item: `_r("manual_7m"/"manual_8m", ...)` no banco de inventário
+- instalação: switch do minigame (`manual_7m` → 8, `manual_8m` → 9, `at = 0` manual)
+- entrega: `DeliveryGetItemId` (case 6, níveis 10 e 11)
+
+**Ajuste das marchas:** com o "Forjar Câmbio" (`cambio_mod = 1`) o caderno
+(`obj_noguiin_Draw_0`) lista `max_gears` linhas e grava em `gears_mod`. O espaçamento
+passa de 35 para 26 px quando há mais de 6 marchas, senão a 8ª linha invade o texto de
+custo.
+
+## 7. Punições por tunar: removidas
+
 
 O jogo original sabotava carro montado em três pontos, todos condicionados a
 `_mod_points > 5`:
@@ -355,7 +405,8 @@ Também nesta versão:
 - **Telemetria do noguintech**: torque, potência, AFR, avanço, patinação, **placa** e
   **FIPE**, com alerta de KNOCK.
 
-## 7. Menu (F6)
+## 8. Menu (F6)
+
 
 
 | Tecla | Ação |
@@ -378,7 +429,8 @@ pisca, porque o passe CRT (`obj_crt_Draw_77`, depth 400) redesenha a
 
 ---
 
-## 8. Loja TOTORTO
+## 9. Loja TOTORTO
+
 
 
 Categoria própria, **anexada no fim** (índice 18) para não deslocar as
@@ -401,7 +453,8 @@ upgrade pago. Motor injetado não recebe distribuidor (`car.carburador > 0`).
 
 ---
 
-## 9. Arte (sprite externo)
+## 10. Arte (sprite externo)
+
 
 
 O ícone é carregado por `sprite_add` em runtime, e **este runner é
@@ -427,7 +480,8 @@ convertido em alfa.
 
 ---
 
-## 10. Estado e arquivos
+## 11. Estado e arquivos
+
 
 
 | Caminho | O quê |
@@ -444,7 +498,8 @@ Config antiga (`dist_cfg` sem `ver`) migra uma vez: `ganho` sobe de 50 para 100.
 
 ---
 
-## 11. Configuração (ini)
+## 12. Configuração (ini)
+
 
 
 `~/.config/My_Car_My_Life/mod_distribuidor.ini` é lido **uma vez no boot**
@@ -501,7 +556,8 @@ Ajustes feitos no F6 continuam valendo: o F6 não escreve no ini, logo não muda
 Quando você quiser que o ini volte a mandar, basta um `--phys`/`--mod-set` (qualquer
 chave), que gera um `rev` novo.
 
-## 12. Verificação
+## 13. Verificação
+
 
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no

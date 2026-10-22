@@ -1,6 +1,6 @@
 [package]
 name = "mcml-fixer"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 description = "CLI + GUI para fazer My Car My Life (GameMaker 1.4) rodar em Linux moderno (libs legadas, resolucao nativa, cursor, UI do PC) e para instalar o mod Distribuidor + Carburador"
 license = "MIT"
