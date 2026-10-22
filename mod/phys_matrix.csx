@@ -64,6 +64,8 @@ if (!variable_global_exists(""mtx_done"")) {
     file_text_write_string(_f, ""inj70|"" + string(_j0) + ""\n"");
     file_text_write_string(_f, ""inj84|"" + string(_j1) + ""\n"");
 
+    file_text_write_string(_f, ""ini_raio|"" + string(global.phys_def.raio) + ""\n"");
+    file_text_write_string(_f, ""ini_mu|"" + string(global.phys_def.mu) + ""\n"");
     var _k99 = global.phys_k(97, 0.31, 9);
     var _base_nova = global.phys_base(138.0, 9, 0.31, 1200, _k99, 0.90, 1.0, 1.0);
     var _base_antiga = (138.0 * 97.0) / (1.2 * 750);

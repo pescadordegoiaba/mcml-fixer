@@ -22,6 +22,8 @@ global.mod_dist_def = {
     avanco_inicial: 10, cent_total: 22, rpm_inicio: 1000, rpm_fim: 3200,
     curva: 1, vac_total: 12, vac_limiar: 0, dwell: 45, desgaste: 0, ganho: 100
 };
+// padroes de fisica: o ini [fisica] sobrescreve; cada carro copia ao criar
+global.phys_def = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
 global.mod_dist_estado = { menu: 0, sel: 0, aviso: """", spr: -1, spr_try: 0, rpm: 800, map: 0, cent: 0, vac: 0, avanco: 10, ideal: 0, bonus: 0, q: 1, knock: 0, dwell_ef: 45, dwell_ms: 5, tok: -1, icon: -1, icon_try: 0 };
 global.mod_dist_ativo = 0;
 
@@ -623,7 +625,8 @@ global.phys_cfg = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return undefined;
     if (!variable_struct_exists(car, ""phys_cfg"") || is_undefined(car.phys_cfg)) {
-        car.phys_cfg = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
+        var _d = global.phys_def;
+        car.phys_cfg = { raio: _d.raio, eficiencia: _d.eficiencia, mu: _d.mu, share: _d.share, embreagem: _d.embreagem, inercia: _d.inercia };
     }
     return car.phys_cfg;
 };
@@ -946,10 +949,18 @@ global.mod_dist_carregar = function() {
         global.mod_dist_def.vac_limiar = ini_read_real(""distribuidor"", ""vac_limiar"", global.mod_dist_def.vac_limiar);
         global.mod_dist_def.dwell = ini_read_real(""distribuidor"", ""dwell"", global.mod_dist_def.dwell);
         global.mod_dist_def.ganho = ini_read_real(""distribuidor"", ""ganho"", global.mod_dist_def.ganho);
+        global.phys_def.raio = ini_read_real(""fisica"", ""raio"", global.phys_def.raio);
+        global.phys_def.eficiencia = ini_read_real(""fisica"", ""eficiencia"", global.phys_def.eficiencia);
+        global.phys_def.mu = ini_read_real(""fisica"", ""mu"", global.phys_def.mu);
+        global.phys_def.share = ini_read_real(""fisica"", ""share"", global.phys_def.share);
+        global.phys_def.embreagem = ini_read_real(""fisica"", ""embreagem"", global.phys_def.embreagem);
+        global.phys_def.inercia = ini_read_real(""fisica"", ""inercia"", global.phys_def.inercia);
         ini_close();
     }
-    global.mod_dist_ativo = (global.mod_dist_modelo() > 0) ? 1 : 0;
 };
+
+// le o ini uma vez no boot (antes so era definida, nunca chamada)
+global.mod_dist_carregar();
 ");
 
 g.QueueFindReplace("gml_Object_obj_player_Step_0",

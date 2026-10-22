@@ -345,6 +345,22 @@ removidos; e `_max_acc = 12` virou 21.
 
 ---
 
+## BUG 12 — O ini do mod nunca era lido
+
+**Sintoma.** `--mod-set ganho=80` gravava o arquivo, mas o jogo ignorava.
+
+**Causa.** `global.mod_dist_carregar` era definida no `Start_0_Create` e **nunca chamada**.
+Nenhuma chave do ini chegava ao jogo — nem as do distribuidor, nem as da física.
+
+**Correção.** A função é chamada no fim do bloco de init (`global.mod_dist_carregar();`) e
+a linha `global.mod_dist_ativo = ...` saiu dela (o gate é do `mod_dist_pode`, em runtime —
+no boot ainda não existe carro). A leitura da seção `[fisica]` entrou junto.
+
+**Verificação.** Harness `mod/phys_matrix.csx` imprime `global.phys_def`:
+com `--phys raio=0.33 mu=0.85` o jogo lê `ini_raio|0.33` e `ini_mu|0.85`.
+
+---
+
 ## O que foi investigado e **não** é bug
 
 Registrado para não ser reaberto:
@@ -422,6 +438,7 @@ necessário um CSX próprio com `try/catch` para extrair as 5498 entradas.
 | 9 | UI piscando | draw de sala + CRT | desenhar no Draw GUI |
 | 10 | distribuidor rendia pouco | `ganho` limitado duas vezes | teto do modelo + `ganho` como fração |
 | 11 | upgrades sem consequência | multiplicadores aplicados após o recálculo | compositor único `motor_torque` |
+| 12 | ini do mod ignorado | `mod_dist_carregar` nunca chamada | chamada no init + seção `[fisica]` |
 
 Todos aplicáveis/revertíveis por `mcml-fixer`, sempre a partir do
 `game.unx.orig`, com backup e verificação.

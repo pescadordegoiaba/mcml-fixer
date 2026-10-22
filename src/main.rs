@@ -569,6 +569,8 @@ global.mod_dist_def = {
     avanco_inicial: 10, cent_total: 22, rpm_inicio: 1000, rpm_fim: 3200,
     curva: 1, vac_total: 12, vac_limiar: 0, dwell: 45, desgaste: 0, ganho: 100
 };
+// padroes de fisica: o ini [fisica] sobrescreve; cada carro copia ao criar
+global.phys_def = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
 global.mod_dist_estado = { menu: 0, sel: 0, aviso: """", spr: -1, spr_try: 0, rpm: 800, map: 0, cent: 0, vac: 0, avanco: 10, ideal: 0, bonus: 0, q: 1, knock: 0, dwell_ef: 45, dwell_ms: 5, tok: -1, icon: -1, icon_try: 0 };
 global.mod_dist_ativo = 0;
 
@@ -1170,7 +1172,8 @@ global.phys_cfg = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return undefined;
     if (!variable_struct_exists(car, ""phys_cfg"") || is_undefined(car.phys_cfg)) {
-        car.phys_cfg = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
+        var _d = global.phys_def;
+        car.phys_cfg = { raio: _d.raio, eficiencia: _d.eficiencia, mu: _d.mu, share: _d.share, embreagem: _d.embreagem, inercia: _d.inercia };
     }
     return car.phys_cfg;
 };
@@ -1493,10 +1496,18 @@ global.mod_dist_carregar = function() {
         global.mod_dist_def.vac_limiar = ini_read_real(""distribuidor"", ""vac_limiar"", global.mod_dist_def.vac_limiar);
         global.mod_dist_def.dwell = ini_read_real(""distribuidor"", ""dwell"", global.mod_dist_def.dwell);
         global.mod_dist_def.ganho = ini_read_real(""distribuidor"", ""ganho"", global.mod_dist_def.ganho);
+        global.phys_def.raio = ini_read_real(""fisica"", ""raio"", global.phys_def.raio);
+        global.phys_def.eficiencia = ini_read_real(""fisica"", ""eficiencia"", global.phys_def.eficiencia);
+        global.phys_def.mu = ini_read_real(""fisica"", ""mu"", global.phys_def.mu);
+        global.phys_def.share = ini_read_real(""fisica"", ""share"", global.phys_def.share);
+        global.phys_def.embreagem = ini_read_real(""fisica"", ""embreagem"", global.phys_def.embreagem);
+        global.phys_def.inercia = ini_read_real(""fisica"", ""inercia"", global.phys_def.inercia);
         ini_close();
     }
-    global.mod_dist_ativo = (global.mod_dist_modelo() > 0) ? 1 : 0;
 };
+
+// le o ini uma vez no boot (antes so era definida, nunca chamada)
+global.mod_dist_carregar();
 ");
 
 g.QueueFindReplace("gml_Object_obj_player_Step_0",
@@ -1829,6 +1840,7 @@ ScriptMessage($"MARK phys_base={(s1.Contains("global.phys_base = function") && s
 ScriptMessage($"MARK phys_gear={(s2.Contains("_base_acceleration * _engine_multiplier * _gear_resistance") ? "ausente" : "ok")}");
 ScriptMessage($"MARK phys_npc={(n1.Contains("global.phys_base(torque") && n2.Contains("global.phys_base(torque") && n3.Contains("global.phys_base(torque") && n4.Contains("global.phys_base(torque") ? "ok" : "ausente")}");
 ScriptMessage($"MARK phys_inercia={(s2.Contains("global.phys_rev(") ? "ok" : "ausente")}");
+ScriptMessage($"MARK phys_cfg={(s1.Contains("global.phys_def") && s1.Contains("ini_read_real") && s1.Contains("car.phys_cfg = ") ? "ok" : "ausente")}");
 "#;
 
 fn run_utmt(script: &str, input: &Path, output: Option<&Path>) -> Result<String, String> {
@@ -2015,6 +2027,45 @@ const MOD_MARKER: &str = "assets/.mcml-mod-distribuidor";
 
 /// Configuracao do distribuidor (chaves da secao [distribuidor] do ini).
 #[derive(Clone)]
+struct PhysOpts {
+    raio: f32,
+    eficiencia: f32,
+    mu: f32,
+    share: f32,
+    embreagem: f32,
+    inercia: f32,
+}
+
+impl Default for PhysOpts {
+    fn default() -> Self {
+        PhysOpts { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0.0, inercia: 0.15 }
+    }
+}
+
+impl PhysOpts {
+    fn to_ini(&self) -> String {
+        format!(
+            "[fisica]\nraio={}\neficiencia={}\nmu={}\nshare={}\nembreagem={}\ninercia={}\n",
+            self.raio, self.eficiencia, self.mu, self.share, self.embreagem, self.inercia
+        )
+    }
+
+    fn set(&mut self, k: &str, v: &str) -> bool {
+        let f = v.parse::<f32>().ok();
+        match k {
+            "raio" => self.raio = f.unwrap_or(self.raio),
+            "eficiencia" => self.eficiencia = f.unwrap_or(self.eficiencia),
+            "mu" => self.mu = f.unwrap_or(self.mu),
+            "share" => self.share = f.unwrap_or(self.share),
+            "embreagem" => self.embreagem = f.unwrap_or(self.embreagem),
+            "inercia" => self.inercia = f.unwrap_or(self.inercia),
+            _ => return false,
+        }
+        true
+    }
+}
+
+#[derive(Clone)]
 struct ModOpts {
     ativo: i32,
     avanco_inicial: i32,
@@ -2027,6 +2078,7 @@ struct ModOpts {
     dwell: i32,
     desgaste: i32,
     ganho: i32,
+    phys: PhysOpts,
 }
 
 impl Default for ModOpts {
@@ -2034,6 +2086,7 @@ impl Default for ModOpts {
         ModOpts {
             ativo: 1, avanco_inicial: 10, cent_total: 22, rpm_inicio: 1000, rpm_fim: 3200,
             curva: 1, vac_total: 12, vac_limiar: 0.0, dwell: 45, desgaste: 0, ganho: 100,
+            phys: PhysOpts::default(),
         }
     }
 }
@@ -2044,7 +2097,7 @@ impl ModOpts {
             "[distribuidor]\nativo={}\navanco_inicial={}\ncent_total={}\nrpm_inicio={}\nrpm_fim={}\ncurva={}\nvac_total={}\nvac_limiar={}\ndwell={}\ndesgaste={}\nganho={}\n",
             self.ativo, self.avanco_inicial, self.cent_total, self.rpm_inicio, self.rpm_fim,
             self.curva, self.vac_total, self.vac_limiar, self.dwell, self.desgaste, self.ganho
-        )
+        ) + &self.phys.to_ini()
     }
 
     fn set(&mut self, k: &str, v: &str) -> bool {
@@ -2061,7 +2114,12 @@ impl ModOpts {
             "dwell" => self.dwell = f.map(|x| x as i32).unwrap_or(self.dwell),
             "desgaste" => self.desgaste = f.map(|x| x as i32).unwrap_or(self.desgaste),
             "ganho" => self.ganho = f.map(|x| x as i32).unwrap_or(self.ganho),
-            _ => return false,
+            _ => {
+                if let Some(k2) = k.strip_prefix("fisica.") {
+                    return self.phys.set(k2, v);
+                }
+                return false;
+            }
         }
         true
     }
@@ -2069,6 +2127,32 @@ impl ModOpts {
 
 fn mod_ini_path() -> PathBuf {
     home().join(".config/My_Car_My_Life/mod_distribuidor.ini")
+}
+
+/// Le o ini existente (mantem o que o usuario ja configurou).
+fn mod_read_ini() -> ModOpts {
+    let mut o = ModOpts::default();
+    let Ok(txt) = fs::read_to_string(mod_ini_path()) else { return o };
+    let mut sec = String::new();
+    for l in txt.lines() {
+        let l = l.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        if l.starts_with('[') && l.ends_with(']') {
+            sec = l[1..l.len() - 1].to_lowercase();
+            continue;
+        }
+        if let Some((k, v)) = l.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            if sec == "fisica" {
+                o.phys.set(k, v);
+            } else {
+                o.set(k, v);
+            }
+        }
+    }
+    o
 }
 
 fn mod_write_ini(o: &ModOpts) -> Result<PathBuf, String> {
@@ -2314,7 +2398,7 @@ impl App {
 
     /// Aba do mod: configuracao fisica do distribuidor + instalar/desinstalar.
     fn ui_mod(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Mod Distribuidor + Carburador").strong());
+        ui.label(egui::RichText::new("Mod: Motor + Distribuidor + Carburador + Física").strong());
         ui.label(
             egui::RichText::new(
                 "Ignicao mecanica para motores carburados: avanco inicial, curva centrifuga \
@@ -2357,6 +2441,21 @@ impl App {
         ui.add(egui::Slider::new(&mut self.mod_opts.dwell, 20..=70).text("dwell do platinado (graus)"));
         ui.add(egui::Slider::new(&mut self.mod_opts.desgaste, 0..=100).text("desgaste do platinado (%)"));
         ui.add(egui::Slider::new(&mut self.mod_opts.ganho, 0..=100).text("ganho de potencia (%)"));
+        ui.separator();
+        ui.label(egui::RichText::new("Física do trem de força").strong());
+        ui.add(egui::Slider::new(&mut self.mod_opts.phys.raio, 0.20..=0.45).text("raio do pneu (m)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.phys.eficiencia, 0.60..=1.0).text("eficiência da transmissão"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.phys.mu, 0.5..=1.5).text("μ global (aderência)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.phys.share, 0.3..=1.0).text("peso no eixo motriz"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.phys.embreagem, 0.0..=1.0).text("embreagem (0 = desligada)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.phys.inercia, 0.02..=0.60).text("inércia do motor (giro livre)"));
+        ui.label(
+            egui::RichText::new(
+                "Motor: peças, cabeçote (válvulas), mistura, ignição e desgaste entram no torque. \
+                 Força na roda = T·relação·eficiência/raio, limitada por μ·m·g; o excesso patina.",
+            )
+            .small(),
+        );
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button("Instalar mod").clicked() {
@@ -2417,7 +2516,7 @@ impl eframe::App for App {
                 if ui.selectable_label(self.tab == 0, "Fixes do jogo").clicked() {
                     self.tab = 0;
                 }
-                if ui.selectable_label(self.tab == 1, "Mod Distribuidor + Carburador").clicked() {
+                if ui.selectable_label(self.tab == 1, "Mod (motor/física)").clicked() {
                     self.tab = 1;
                 }
             });
@@ -2919,7 +3018,7 @@ fn run_cli(args: &[String]) {
             }
         }
         "--mod-install" => {
-            let mut o = ModOpts::default();
+            let mut o = mod_read_ini();
             for a in rest.iter().skip(1) {
                 if let Some((k, v)) = a.split_once('=') {
                     if !o.set(k, v) {
@@ -2932,7 +3031,7 @@ fn run_cli(args: &[String]) {
         "--mod-uninstall" => mod_uninstall(&game_dir, &mut log),
         "--mod-check" => mod_check(&game_dir, &mut log),
         "--mod-set" => {
-            let mut o = ModOpts::default();
+            let mut o = mod_read_ini();
             for a in rest.iter().skip(1) {
                 if let Some((k, v)) = a.split_once('=') {
                     if !o.set(k, v) {
@@ -2945,12 +3044,41 @@ fn run_cli(args: &[String]) {
                 Err(e) => log.push(format!("MOD ERRO: {}", e)),
             }
         }
+        "--phys" => {
+            let mut o = mod_read_ini();
+            let mut n = 0;
+            for a in rest.iter().skip(1) {
+                if let Some((k, v)) = a.split_once('=') {
+                    let k2 = k.strip_prefix("fisica.").unwrap_or(k);
+                    if o.phys.set(k2, v) {
+                        n += 1;
+                    } else {
+                        log.push(format!("chave de fisica desconhecida: {}", k));
+                    }
+                }
+            }
+            match mod_write_ini(&o) {
+                Ok(p) => log.push(format!("FISICA: {} chave(s) -> {}", n, p.display())),
+                Err(e) => log.push(format!("MOD ERRO: {}", e)),
+            }
+        }
         "--mod-status" => {
             log.push(format!(
                 "MOD   : {}",
                 mod_state(&game_dir).unwrap_or_else(|| "nao instalado".into())
             ));
             log.push(format!("MOD ini: {}", mod_ini_path().display()));
+            let o = mod_read_ini();
+            log.push(format!(
+                "MOD dist: ativo={} avanco={} cent={} rpm={}..{} curva={} vac={}/{} dwell={} ganho={}",
+                o.ativo, o.avanco_inicial, o.cent_total, o.rpm_inicio, o.rpm_fim,
+                o.curva, o.vac_total, o.vac_limiar, o.dwell, o.ganho
+            ));
+            log.push(format!(
+                "MOD fis : raio={} eficiencia={} mu={} share={} embreagem={} inercia={}",
+                o.phys.raio, o.phys.eficiencia, o.phys.mu, o.phys.share,
+                o.phys.embreagem, o.phys.inercia
+            ));
         }
         "--help" | "-h" => {
             println!("mcml-fixer [--dir PASTA] <acao>");
@@ -2965,8 +3093,9 @@ fn run_cli(args: &[String]) {
             println!("  --patch-gen8 LARGURAxALT   patch so no GEN8 (com backup)");
             println!("  --revert-gen8              restaura game.unx");
             println!("  --play [LARGURAxALT]       inicia o jogo (gamescope)");
-            println!("  --mod-install [k=v ...]    instala o mod Distribuidor + Carburador");
-            println!("  --mod-uninstall            remove o mod Distribuidor + Carburador");
+            println!("  --mod-install [k=v ...]    instala o mod (motor, distribuidor, carburador, fisica)");
+            println!("  --mod-uninstall            remove o mod");
+            println!("  --phys k=v ...             fisica: raio, eficiencia, mu, share, embreagem, inercia");
             println!("  --mod-check                confere o mod dentro do game.unx");
             println!("  --mod-set k=v ...          grava a configuracao do mod");
             println!("  --mod-status               estado do mod");

@@ -409,17 +409,57 @@ Config antiga (`dist_cfg` sem `ver`) migra uma vez: `ganho` sobe de 50 para 100.
 
 ---
 
+## 10. Configuração (ini)
+
+`~/.config/My_Car_My_Life/mod_distribuidor.ini` é lido **uma vez no boot**
+(`global.mod_dist_carregar()`) e define os padrões de carro novo:
+
+```ini
+[distribuidor]
+ativo=1
+avanco_inicial=10
+cent_total=22
+rpm_inicio=1000
+rpm_fim=3200
+curva=1
+vac_total=12
+vac_limiar=0
+dwell=45
+desgaste=0
+ganho=100
+
+[fisica]
+raio=0.31
+eficiencia=0.9
+mu=1
+share=1
+embreagem=0
+inercia=0.15
+```
+
+O CLI grava sem apagar o resto:
+
+```bash
+mcml-fixer --mod-set ganho=80             # mantem a secao [fisica]
+mcml-fixer --phys raio=0.33 mu=0.85       # mantem a secao [distribuidor]
+mcml-fixer --mod-status                   # mostra os dois blocos
+```
+
+`[fisica]`: `raio` do pneu (m), `eficiencia` da transmissão, `mu` global (multiplica o μ
+do composto), `share` de peso no eixo motriz, `embreagem` (0 = desligada) e `inercia`
+(quanto o motor demora a subir de giro livre).
+
 ## 10. Verificação
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no
-decompilado. Os 24 atuais:
+decompilado. Os 25 atuais:
 
 ```
 versao=v2.1-fisica  item  limites  dano  potencia  ui
 loja  shop_tile  shop_preco  shop_entrega  shop_instala
 carb  carb_hook  torque  potencia_real  pot_npc
 motor_upg  motor_hook  cabecote  maxacc
-phys_base  phys_gear  phys_npc  phys_inercia
+phys_base  phys_gear  phys_npc  phys_inercia  phys_cfg
 ```
 
 `carb` confere as funções `mod_carb_cfg`/`mod_carb_desvio`; `carb_hook` confere

@@ -187,10 +187,11 @@ mcml-fixer --patch-gen8 1280x1024   # patch só no GEN8 (cria game.unx.orig)
 mcml-fixer --revert-gen8            # restaura o game.unx
 mcml-fixer --play 1920x1080         # inicia via gamescope
 mcml-fixer --play --no-gamescope    # inicia direto
-mcml-fixer --mod-install            # instala o mod Distribuidor + Carburador
+mcml-fixer --mod-install            # instala o mod (motor + distribuidor + carburador + fisica)
 mcml-fixer --mod-check              # confere o mod dentro do game.unx
-mcml-fixer --mod-status             # estado do mod + caminho do ini
-mcml-fixer --mod-set k=v            # defaults do mod (carros novos)
+mcml-fixer --mod-status             # estado do mod + valores do ini
+mcml-fixer --mod-set ganho=80       # defaults do distribuidor (carros novos)
+mcml-fixer --phys raio=0.33 mu=0.85 # defaults da fisica (carros novos)
 mcml-fixer --mod-uninstall          # remove o mod (restaura backup)
 mcml-fixer --dir "/caminho/do/jogo" --check
 ```
