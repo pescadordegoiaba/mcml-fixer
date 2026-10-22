@@ -1022,6 +1022,144 @@ global.pot_hp = function(_torque, _rpm, _maxtorque, _maxrpm, _maxhp) {
     return (_torque * _rpm) / _k;
 };
 
+// =====================================================================
+//  MOTOR: um lugar so para todo efeito de peca/ajuste
+// =====================================================================
+// leitura segura de campo (save antigo pode nao ter a chave)
+global.motor_campo = function(_car, _nome) {
+    if (is_undefined(_car)) return 0;
+    if (!variable_struct_exists(_car, _nome)) return 0;
+    var _v = variable_struct_get(_car, _nome);
+    if (is_undefined(_v)) return 0;
+    return _v;
+};
+
+// efeito conjunto das pecas no torque (ganho pequeno e cumulativo)
+global.motor_pecas = function(_car) {
+    var _m = 1;
+    _m *= 1 + (0.010 * min(global.motor_campo(_car, ""pistao""), 3));
+    _m *= 1 + (0.005 * min(global.motor_campo(_car, ""bielas""), 3));
+    _m *= 1 + (0.008 * min(global.motor_campo(_car, ""bloco""), 3));
+    _m *= 1 + (0.006 * min(global.motor_campo(_car, ""vira""), 3));
+    _m *= 1 + (0.015 * min(global.motor_campo(_car, ""filtro""), 2));
+    _m *= 1 + (0.020 * min(global.motor_campo(_car, ""admissao""), 2));
+    _m *= 1 + (0.018 * min(global.motor_campo(_car, ""escape""), 2));
+    _m *= 1 + (0.018 * min(global.motor_campo(_car, ""pipe""), 2));
+    return _m;
+};
+
+// cabecote do carro do jogador (evita aspas dentro do CSX)
+global.motor_cabecote_player = function() {
+    return global.motor_campo(global.mod_dist_car(), ""cabecote"");
+};
+
+// cabecote troca o conjunto de valvulas (+4 por nivel, teto 24)
+global.motor_valvulas = function(_base, _cab) {
+    if (is_undefined(_base)) _base = 8;
+    return clamp(_base + (4 * min(_cab, 3)), 8, 24);
+};
+
+// boost / deslocamento: o que hoje vive em _engine_multiplier
+global.phys_engine_fator = function(_turbo, _piston, _litros) {
+    if (_turbo > 0) {
+        return clamp(1 + (power(_turbo, 1.3) * 0.35), 1, 2);
+    }
+    var _cil = _piston / max(1, _piston);
+    return clamp(0.6 + (_cil * 0.35) + (_litros * 0.05), 0.9, 1.35);
+};
+
+// faixa ideal de AFR por combustivel e giro (mesma tabela do jogo)
+global.motor_afr_ideal = function(_rpm, _rpm_max, _turbo, _fuel) {
+    var _ratio = clamp(_rpm / max(1, _rpm_max), 0, 1);
+    var _bmin = 12.35, _amin = (_turbo > 0) ? 11.76 : 12.35;
+    if (_fuel == 2) { _bmin = 8.82; _amin = (_turbo > 0) ? 7.02 : 7.47; }
+    else if (_fuel == 3) { _bmin = 6.08; _amin = (_turbo > 0) ? 4.74 : 4.99; }
+    else if (_fuel == 4) { _bmin = 1.53; _amin = (_turbo > 0) ? 1.12 : 1.19; }
+    return lerp(_bmin, _amin, power(_ratio, 1.8));
+};
+
+// AFR do carburador: gicle ideal por tipo + blend do 2o corpo + circuitos do mod
+global.motor_afr = function(_car, _rpm, _rpm_max, _turbo, _fuel) {
+    if (is_undefined(_car)) return 14.7;
+    var _carb = global.motor_campo(_car, ""carburador"");
+    if (_carb <= 0) return 14.7;
+    var _tabela_ideal = [38, 42, 46, 48, 50, 53, 56, 60];
+    var _tabela_sens = [0.018, 0.022, 0.026, 0.030, 0.034, 0.038, 0.042, 0.048];
+    var _i = clamp(_carb, 1, 8) - 1;
+    var _ratio = clamp(_rpm / max(1, _rpm_max), 0, 1);
+    var _min = global.motor_afr_ideal(_rpm, _rpm_max, _turbo, _fuel);
+    var _bmax = 14.99;
+    var _amax = (_turbo > 0) ? 12.35 : 12.94;
+    if (_fuel == 2) { _bmax = 9.18; _amax = (_turbo > 0) ? 7.38 : 7.74; }
+    else if (_fuel == 3) { _bmax = 6.4; _amax = (_turbo > 0) ? 4.99 : 5.25; }
+    else if (_fuel == 4) { _bmax = 1.61; _amax = (_turbo > 0) ? 1.19 : 1.26; }
+    var _bmin = 12.35;
+    if (_fuel == 2) { _bmin = 8.82; } else if (_fuel == 3) { _bmin = 6.08; } else if (_fuel == 4) { _bmin = 1.53; }
+    var _max = lerp(_bmax, _amax, power(_ratio, 1.8));
+    var _mid = (_min + _max) / 2;
+    var _gicle = global.motor_campo(_car, ""gicle"");
+    var _gicle2 = global.motor_campo(_car, ""gicle_2nd"");
+    var _ativo = _gicle;
+    if (_carb >= 3 && _rpm >= (_rpm_max / 2)) {
+        var _blend = power(clamp((_rpm - (_rpm_max / 2)) / (_rpm_max / 2), 0, 1), 0.7);
+        _ativo = lerp(_gicle, _gicle2, _blend);
+    }
+    var _desvio = (_ativo - _tabela_ideal[_i]) + global.mod_carb_desvio(_ratio, global.mod_carb_cfg(), _tabela_ideal[_i]);
+    return max(_mid - (_desvio * _tabela_sens[_i] * _mid), 0.5);
+};
+
+// AFR dos injetados: duracao de injecao define o desvio (70 = referencia)
+global.motor_afr_inj = function(_rpm, _rpm_max, _turbo, _fuel, _injecao) {
+    var _ideal = global.motor_afr_ideal(_rpm, _rpm_max, _turbo, _fuel);
+    var _desvio = clamp((_injecao - 70) / 30, -1, 1);
+    return max(_ideal * (1 - (_desvio * 0.18)), 0.5);
+};
+
+// mistura -> multiplicador (mesma curva do jogo: 1.45 ideal, 0.70 pessimo)
+global.motor_mistura_mult = function(_afr, _rpm, _rpm_max, _turbo, _fuel) {
+    var _ideal_min = global.motor_afr_ideal(_rpm, _rpm_max, _turbo, _fuel);
+    var _dist = abs(_afr - _ideal_min) / max(0.001, _ideal_min * 0.5);
+    return lerp(1.45, 0.70, clamp(_dist, 0, 1));
+};
+
+// ignicao: ~28 graus e o ponto bom; longe disso perde torque
+global.motor_ignicao_mult = function(_ignicao) {
+    if (is_undefined(_ignicao)) return 1;
+    if (_ignicao <= 0) return 1;   // sem leitura de ignicao: neutro, nao penaliza
+    var _desvio = (_ignicao - 28) / 10;
+    return clamp(1 - (abs(_desvio) * 0.045), 0.85, 1.04);
+};
+
+// desgaste: 70 = peca boa; abaixo perde torque ate -40%
+global.motor_desgaste = function(_car) {
+    if (is_undefined(_car)) return 1;
+    var _campos = [""vpistao"", ""vbielas"", ""vcabecote"", ""vcomando"", ""vvira"", ""vbloco""];
+    var _m = 1;
+    for (var _i = 0; _i < array_length(_campos); _i++) {
+        // 0 e desgaste total, nao ""campo ausente"": checar existencia antes
+        if (variable_struct_exists(_car, _campos[_i])) {
+            var _v = variable_struct_get(_car, _campos[_i]);
+            if (!is_undefined(_v) && _v < 70) {
+                _m *= clamp(1 - ((1 - (_v / 70)) * 0.06), 0.60, 1);
+            }
+        }
+    }
+    return _m;
+};
+
+// compositor: TODO efeito de peca/ajuste entra aqui, uma vez
+global.motor_torque = function(_car, _rpm, _rpm_max, _afr) {
+    var _m = global.motor_pecas(_car);
+    _m *= global.phys_engine_fator(global.turbo, global.piston, global.litros);
+    var _carb = global.motor_campo(_car, ""carburador"");
+    var _afr_eff = _afr;
+    if (_carb <= 0) _afr_eff = global.motor_afr_inj(_rpm, _rpm_max, global.turbo, global.fuel, global.injecao);
+    _m *= global.motor_mistura_mult(_afr_eff, _rpm, _rpm_max, global.turbo, global.fuel);
+    _m *= global.motor_ignicao_mult(global.ignicao);
+    _m *= global.motor_desgaste(_car);
+    return _m;
+};
+
 // ---- carburador: circuitos de lenta, agulha e borboleta ----
 global.mod_carb_gicle_ideal = function(_carb) {
     switch (_carb) {
@@ -1287,10 +1425,46 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
     "if (global.mod_dist_ativo) { global.torque *= global.mod_dist_fator(); global.ignicao = global.mod_dist_estado.avanco; } var _base_acceleration = (global.torque * global.hp) / (global.weight * 750);",
     false);
 
+// --- FASE 1: motor com consequencia ---
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "    var _camshaft_low = 1;",
+    "    global.afr = global.motor_afr(global.car_data[global.vehicles_array], global.rpm, global.car_data[global.vehicles_array].rpm, global.turbo, global.fuel); var _camshaft_low = 1;",
+    false);
+
+// todo efeito de peca/ajuste entra no torque aqui, antes do hp
 g.QueueFindReplace("gml_Object_obj_player_Step_0",
     "global.hp = clamp(global.hp, 0, global.maxhp * 1.2);",
-    "global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
+    "global.torque *= global.motor_torque(global.car_data[global.vehicles_array], global.rpm, global.car_data[global.vehicles_array].rpm, global.afr); global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
     false);
+
+// cabecote muda o conjunto de valvulas
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "switch (global.valvulas)",
+    "switch (global.motor_valvulas(global.valvulas, global.motor_cabecote_player()))",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_Step_0",
+    "switch (valvulas)", "switch (global.motor_valvulas(valvulas, cabecote))", false);
+g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Step_0",
+    "switch (valvulas)", "switch (global.motor_valvulas(valvulas, cabecote))", false);
+g.QueueFindReplace("gml_Object_obj_ia_opponent_Step_0",
+    "switch (valvulas)", "switch (global.motor_valvulas(valvulas, cabecote))", false);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0",
+    "switch (valvulas)", "switch (global.motor_valvulas(valvulas, cabecote))", false);
+
+// multiplicadores tardios: agora tudo vem de motor_torque
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.hp *= mult_pistao;", "// desgaste: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.torque *= mult_pistao;", "// desgaste: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.hp *= mult_cmd;", "// desgaste: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.torque *= mult_cmd;", "// desgaste: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.hp *= mult_vira;", "// desgaste: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.torque *= mult_vira;", "// desgaste: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.hp *= (_carb_mult / 1.25);", "// mistura: motor_torque", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.torque *= (_carb_mult / 1.8);", "// mistura: motor_torque", false);
+
+// teto de aceleracao deixa de punir quem instala peca
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_max_acc = 12;", "_max_acc = 21;", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_max_acc = 16;", "_max_acc = 25;", false);
+
 g.QueueFindReplace("gml_Object_obj_ia_car_Step_0",
     "hp = clamp(hp, 0, maxhp * 1.2);",
     "hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.2);",
@@ -1503,6 +1677,10 @@ ScriptMessage($"MARK carb_hook={(s2.Contains("mod_carb_desvio") && s2.Contains("
 ScriptMessage($"MARK torque={(s2.Contains("global.torque *= global.mod_dist_fator()") && s2.Contains("global.ignicao = global.mod_dist_estado.avanco") ? "ok" : "ausente")}");
 ScriptMessage($"MARK potencia_real={(s1.Contains("global.pot_hp = function") && s2.Contains("global.pot_hp(global.torque") ? "ok" : "ausente")}");
 ScriptMessage($"MARK pot_npc={(n1.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") && n2.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") && n3.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") && n4.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") ? "ok" : "ausente")}");
+ScriptMessage($"MARK motor_upg={(s1.Contains("global.motor_pecas") && s1.Contains("global.motor_afr") && s1.Contains("global.motor_ignicao_mult") && s1.Contains("global.motor_torque") ? "ok" : "ausente")}");
+ScriptMessage($"MARK motor_hook={(s2.Contains("global.torque *= global.motor_torque(") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cabecote={(s2.Contains("global.motor_valvulas(global.valvulas") && n1.Contains("global.motor_valvulas(valvulas") ? "ok" : "ausente")}");
+ScriptMessage($"MARK maxacc={(s2.Contains("_max_acc = 12;") ? "ausente" : "ok")}");
 "#;
 
 fn run_utmt(script: &str, input: &Path, output: Option<&Path>) -> Result<String, String> {

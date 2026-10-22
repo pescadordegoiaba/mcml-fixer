@@ -318,6 +318,33 @@ regula quanto dele é usado (padrão 100); o fator de faísca só penaliza quand
 
 ---
 
+## BUG 11 — Upgrades sem consequência (e um que atrapalhava)
+
+**Sintoma.** Instalar cabeçote, filtro, escape, admissão, bloco, pistão ou virabrequim não
+mudava a força do carro; mexer no carburador mudava o AFR no HUD, mas não a aceleração.
+
+**Evidência (auditoria no decompilado).**
+
+- `hp`/`torque` são recalculados do zero a cada frame (linha 864). Tudo que multiplica
+  esses globais **depois** disso é descartado antes da física usar:
+  - `_carb_mult` em 3924–3925 (carburador);
+  - `mult_pistao` 1726–1727, `mult_cmd` 1767, `mult_vira` 1817 (desgaste).
+- `cabecote` só aparecia em `_get_damage_multiplier`; nada mudava `global.valvulas`.
+- `filtro`, `pipe`, `intercooler`, `embreagem`, `transmissao` e `vira` só apareciam no
+  bloco de `_mod_points`; `escape` não aparecia em lugar nenhum fora do save.
+- `_mod_points > 5` num aspirado trocava o teto de aceleração de **21 para 12** — instalar
+  peça deixava o carro mais lento.
+
+**Correção.** Um compositor único (`global.motor_torque`) aplicado na derivação de `hp`,
+antes da física, absorvendo peças, boost, mistura (carburador **ou** injeção), ignição e
+desgaste; `cabecote` passou a mudar as válvulas; os multiplicadores tardios foram
+removidos; e `_max_acc = 12` virou 21.
+
+**Verificação.** `mcml-fixer --mod-check` → `motor_upg`, `motor_hook`, `cabecote`,
+`maxacc`; matriz `mod/phys_matrix.csx` com as razões de `docs/MOD.md`.
+
+---
+
 ## O que foi investigado e **não** é bug
 
 Registrado para não ser reaberto:
@@ -394,6 +421,7 @@ necessário um CSX próprio com `try/catch` para extrair as 5498 entradas.
 | 8 | F6 não abria | gate em `mod_dist_ativo` | `mod_dist_pode()` |
 | 9 | UI piscando | draw de sala + CRT | desenhar no Draw GUI |
 | 10 | distribuidor rendia pouco | `ganho` limitado duas vezes | teto do modelo + `ganho` como fração |
+| 11 | upgrades sem consequência | multiplicadores aplicados após o recálculo | compositor único `motor_torque` |
 
 Todos aplicáveis/revertíveis por `mcml-fixer`, sempre a partir do
 `game.unx.orig`, com backup e verificação.

@@ -1,0 +1,133 @@
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"        default:
+            return [];
+    }
+}
+
+function GetPressureTurbo(arg0)",
+    @"        case 18:
+            return (global.idioma == 0) ? [""Original"", ""Competicao""] : [""Original"", ""Competition""];
+        default:
+            return [];
+    }
+}
+
+function GetPressureTurbo(arg0)",
+    false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"                return @@array_get@@([""シングルボディ 2E"", ""シングルボディ 3E"", ""デュアルボディ VFD 446"", ""デュアルボディ Vever h34"", ""デュアルボディ Vever 40"", ""デュアルボディ Vever 44"", ""デュアルボディ Vever 48"", ""デュアルボディ Vever 55""], arg1);
+            }
+            break;
+        default:",
+    @"                return @@array_get@@([""シングルボディ 2E"", ""シングルボディ 3E"", ""デュアルボディ VFD 446"", ""デュアルボディ Vever h34"", ""デュアルボディ Vever 40"", ""デュアルボディ Vever 44"", ""デュアルボディ Vever 48"", ""デュアルボディ Vever 55""], arg1);
+            }
+            break;
+        case 18:
+            if (idioma == 0)
+            {
+                return @@array_get@@([""Distribuidor Original"", ""Distribuidor Competicao""], arg1);
+            }
+            return @@array_get@@([""Original Distributor"", ""Competition Distributor""], arg1);
+            break;
+        default:",
+    false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"            return @@array_get@@([600, 1500, 950, 1300, 2600, 3200, 6600, 9600, 9600], arg1);",
+    @"            return @@array_get@@([600, 1500, 950, 1300, 2600, 3200, 6600, 9600, 9600], arg1);
+        case 18:
+            return @@array_get@@([800, 12000], arg1);",
+    false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"        case 17:
+            return ""carburador"";
+        default:
+            return ""parte_invalida"";",
+    @"        case 17:
+            return ""carburador"";
+        case 18:
+            return ""distribuidor"";
+        default:
+            return ""parte_invalida"";",
+    false);
+g.QueueFindReplace("gml_GlobalScript_Delivery",
+    @"                case 7:
+                    return ""carburador_8"";
+            }
+    }
+    return """";",
+    @"                case 7:
+                    return ""carburador_8"";
+            }
+        case 18:
+            switch (arg1)
+            {
+                case 0:
+                    return ""distribuidor_original"";
+                case 1:
+                    return ""distribuidor_competicao"";
+            }
+    }
+    return """";",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"        var content_height_ext2 = 1120;",
+    @"        var content_height_ext2 = 1260;",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"[win_x + 400, win_y + 820 + _venture_y]];",
+    @"[win_x + 400, win_y + 820 + _venture_y], [win_x + 40, win_y + 950 + _venture_y]];",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"[win_x + 480, win_y + 978 + _venture_y]];",
+    @"[win_x + 480, win_y + 978 + _venture_y], [win_x + 120, win_y + 1133 + _venture_y]];",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"                if (i == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, i, sx, sy, scale, scale, 0, -1, 1);
+                }",
+    @"                if (i == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, i, sx, sy, scale, scale, 0, -1, 1);
+                }
+                else if (i == 18)
+                {
+                    global.mod_dist_draw_icon(sx, sy + 10, 96);
+                }",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"                            else
+                            {
+                                label_ext = ""キャブレター"";
+                            }
+                            break;
+                    }",
+    @"                            else
+                            {
+                                label_ext = ""キャブレター"";
+                            }
+                            break;
+                        case 18:
+                            label_ext = ""DISTRIBUIDOR"";
+                            break;
+                    }",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"                if (global.venture_pecas == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, 0, sx, sy, scale, scale, 0, -1, 1);
+                }",
+    @"                if (global.venture_pecas == 18)
+                {
+                    global.mod_dist_draw_icon(sx, sy + 10, 96);
+                }
+                else if (global.venture_pecas == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, 0, sx, sy, scale, scale, 0, -1, 1);
+                }",
+    false);
+g.QueueFindReplace("gml_GlobalScript_Inventory",
+    @"    variable_struct_set(@@array_get@@(global.car_data, idx), campo, _inventory_campo_value(arg1.item_id, campo));",
+    @"    var _pv_inst = variable_struct_exists(data, ""campo_val"") ? data.campo_val : _inventory_campo_value(arg1.item_id, campo);
+    variable_struct_set(@@array_get@@(global.car_data, idx), campo, _pv_inst);",
+    false);

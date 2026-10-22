@@ -176,7 +176,59 @@ a curva antiga. O carro passa a precisar de giro para render.
 
 ---
 
-## 4. Carburador: circuitos novos
+## 4. Motor: um só lugar para todo upgrade
+
+Antes, cada peça era aplicada em pontos diferentes do Step — e a maioria em lugares
+onde o valor já tinha sido consumido. `hp` e `torque` são **recalculados do zero** a cada
+frame (linha 864), então qualquer multiplicação feita depois da derivação de `hp` (1142)
+é descartada no frame seguinte, antes de a física usar.
+
+Agora existe um compositor único:
+
+```gml
+global.motor_torque = function(_car, _rpm, _rpm_max, _afr) {
+    var _m = global.motor_pecas(_car);                  // filtro, pipe, escape, admissao, bloco...
+    _m *= global.phys_engine_fator(global.turbo, global.piston, global.litros);
+    _m *= global.motor_mistura_mult(_afr_eff, ...);     // carburador OU injeção
+    _m *= global.motor_ignicao_mult(global.ignicao);
+    _m *= global.motor_desgaste(_car);
+    return _m;
+};
+```
+
+Plugado na linha da derivação de `hp`, **antes** de `pot_hp` e antes da aceleração:
+
+```gml
+global.torque *= global.motor_torque(car, rpm, rpm_max, global.afr);
+global.hp = clamp(global.pot_hp(global.torque, ...), 0, maxhp * 1.2);
+```
+
+Consequências medidas no harness `mod/phys_matrix.csx` (motor de referência, 4000 rpm):
+
+| Caso | Fator sobre o torque |
+|---|---|
+| base (sem peça) | 1.210 |
+| todas as peças no máximo | 1.520 (+25,6%) |
+| cabeçote nível 3 | válvulas 8 → 20 |
+| turbo nível 2 | ×1,72 sobre o base com peças |
+| avanço 10° (ideal 28°) | ×0,914 |
+| desgaste total | ×0,690 |
+| gicle 50 → 60 | ×0,93 |
+| injeção 70 → 84 | ×0,92 |
+
+O que mudou de lugar:
+
+- `_engine_multiplier` (boost/deslocamento) virou `phys_engine_fator` dentro do torque;
+- `mult_pistao` / `mult_cmd` / `mult_vira` (aplicados tarde) viraram `motor_desgaste`;
+- `_carb_mult` (aplicado tarde) virou `motor_mistura_mult` no torque — o carburador passou
+  a afetar aceleração, não só o AFR do HUD;
+- `global.injecao` virou `motor_afr_inj` (injetados);
+- `global.ignicao` virou `motor_ignicao_mult` (o distribuidor do mod já escreve nele);
+- `cabecote` passou a mudar `switch (global.valvulas)` via `motor_valvulas`;
+- `_max_acc = 12` para aspirados com mais de 5 peças foi removido — instalar peça não
+  derruba mais o teto de aceleração.
+
+## 5. Carburador: circuitos novos
 
 O jogo já modela `gicle`, `gicle_2nd` (segundo corpo) e oito tipos de
 carburador, com `_gicle_ideal` e `_sensibilidade` por tipo, e converte o
@@ -238,7 +290,7 @@ Pobre perde muito mais que rico.
 
 ---
 
-## 5. Menu (F6)
+## 6. Menu (F6)
 
 | Tecla | Ação |
 |---|---|
@@ -260,7 +312,7 @@ pisca, porque o passe CRT (`obj_crt_Draw_77`, depth 400) redesenha a
 
 ---
 
-## 6. Loja TOTORTO
+## 7. Loja TOTORTO
 
 Categoria própria, **anexada no fim** (índice 18) para não deslocar as
 categorias 0–17:
@@ -282,7 +334,7 @@ upgrade pago. Motor injetado não recebe distribuidor (`car.carburador > 0`).
 
 ---
 
-## 7. Arte (sprite externo)
+## 8. Arte (sprite externo)
 
 O ícone é carregado por `sprite_add` em runtime, e **este runner é
 sandboxed**: só resolve arquivos na **raiz** da pasta de save.
@@ -307,7 +359,7 @@ convertido em alfa.
 
 ---
 
-## 8. Estado e arquivos
+## 9. Estado e arquivos
 
 | Caminho | O quê |
 |---|---|
@@ -323,15 +375,16 @@ Config antiga (`dist_cfg` sem `ver`) migra uma vez: `ganho` sobe de 50 para 100.
 
 ---
 
-## 9. Verificação
+## 10. Verificação
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no
-decompilado. Os 16 atuais:
+decompilado. Os 20 atuais:
 
 ```
 versao=v2.1-fisica  item  limites  dano  potencia  ui
 loja  shop_tile  shop_preco  shop_entrega  shop_instala
 carb  carb_hook  torque  potencia_real  pot_npc
+motor_upg  motor_hook  cabecote  maxacc
 ```
 
 `carb` confere as funções `mod_carb_cfg`/`mod_carb_desvio`; `carb_hook` confere
