@@ -23,6 +23,7 @@ global.mod_dist_def = {
     curva: 1, vac_total: 12, vac_limiar: 0, dwell: 45, desgaste: 0, ganho: 100
 };
 // padroes de fisica: o ini [fisica] sobrescreve; cada carro copia ao criar
+global.mod_rev = 0;
 global.phys_def = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
 global.mod_dist_estado = { menu: 0, sel: 0, aviso: """", spr: -1, spr_try: 0, rpm: 800, map: 0, cent: 0, vac: 0, avanco: 10, ideal: 0, bonus: 0, q: 1, knock: 0, dwell_ef: 45, dwell_ms: 5, tok: -1, icon: -1, icon_try: 0 };
 global.mod_dist_ativo = 0;
@@ -76,6 +77,49 @@ global.mod_dist_cfg = function() {
         car.dist_cfg.ganho = 100;
     }
     return car.dist_cfg;
+};
+
+// Aplica o ini ao carro SALVO quando o arquivo muda (compara data de modificacao).
+// Assim o que voce grava com --phys/--mod-set vale no proximo boot, sem comprar
+// carro novo e sem apagar o que foi ajustado no F6 (o F6 nao toca no ini).
+global.mod_cfg_tick = 0;
+global.mod_cfg_aplicar = function() {
+    if (current_time < global.mod_cfg_tick) return 0;
+    global.mod_cfg_tick = current_time + 1000;
+    var _st = variable_global_exists(""mod_rev"") ? global.mod_rev : 0;
+    if (_st <= 0) return 0;
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return 0;
+    if (variable_struct_exists(car, ""cfg_stamp"") && car.cfg_stamp == _st) return 0;
+
+    var _tinha = (variable_struct_exists(car, ""phys_cfg"") && !is_undefined(car.phys_cfg)) ? 1 : 0;
+    car.phys_cfg = { raio: global.phys_def.raio, eficiencia: global.phys_def.eficiencia,
+                     mu: global.phys_def.mu, share: global.phys_def.share,
+                     embreagem: global.phys_def.embreagem, inercia: global.phys_def.inercia };
+
+    var _dist = 0;
+    if (global.mod_dist_modelo() > 0) {
+        var _c = global.mod_dist_cfg();
+        _c.avanco_inicial = global.mod_dist_def.avanco_inicial;
+        _c.cent_total = global.mod_dist_def.cent_total;
+        _c.rpm_inicio = global.mod_dist_def.rpm_inicio;
+        _c.rpm_fim = global.mod_dist_def.rpm_fim;
+        _c.curva = global.mod_dist_def.curva;
+        _c.vac_total = global.mod_dist_def.vac_total;
+        _c.vac_limiar = global.mod_dist_def.vac_limiar;
+        _c.dwell = global.mod_dist_def.dwell;
+        _c.ganho = global.mod_dist_def.ganho;
+        _c.ver = 2;
+        _dist = 1;
+    }
+    car.cfg_stamp = _st;
+
+    var _f = file_text_open_write(""mod_cfg_diag.txt"");
+    file_text_write_string(_f, ""aplicado=1 phys_antes="" + string(_tinha) + "" dist="" + string(_dist));
+    file_text_write_string(_f, "" raio="" + string(car.phys_cfg.raio) + "" mu="" + string(car.phys_cfg.mu));
+    file_text_write_string(_f, "" inercia="" + string(car.phys_cfg.inercia) + "" ganho="" + string(global.mod_dist_def.ganho));
+    file_text_close(_f);
+    return 1;
 };
 
 global.mod_dist_comprar = function(modelo) {
@@ -955,6 +999,7 @@ global.mod_dist_carregar = function() {
         global.phys_def.share = ini_read_real(""fisica"", ""share"", global.phys_def.share);
         global.phys_def.embreagem = ini_read_real(""fisica"", ""embreagem"", global.phys_def.embreagem);
         global.phys_def.inercia = ini_read_real(""fisica"", ""inercia"", global.phys_def.inercia);
+        global.mod_rev = ini_read_real(""mod"", ""rev"", 0);
         ini_close();
     }
 };
@@ -1105,6 +1150,8 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
     false);
 
 g.QueueAppend("gml_Object_obj_noguiin_Draw_64", @"
+// aplica o ini ao carro salvo quando o arquivo muda (1x por segundo, no maximo)
+global.mod_cfg_aplicar();
 // desenha so no Draw GUI: fica acima do passe CRT, sem piscar
 global.mod_dist_ui();
 ");

@@ -361,6 +361,22 @@ com `--phys raio=0.33 mu=0.85` o jogo lê `ini_raio|0.33` e `ini_mu|0.85`.
 
 ---
 
+## BUG 13 — `file_datetime` não existe no runner 1.4
+
+**Sintoma.** Aplicar o ini ao carro salvo abortava com
+`Variable obj_start_car.file_datetime not set before reading it`.
+
+**Causa.** O plano era comparar a data de modificação do ini com a última aplicada, mas
+`file_datetime` é de versões posteriores do GameMaker; o runner 1.4 não a expõe.
+
+**Correção.** O CLI passou a gravar `[mod] rev=<epoch>` no ini a cada escrita e o GML
+compara `global.mod_rev` (lido no boot) com `car.cfg_stamp`.
+
+**Verificação.** Teste em runtime com carro simulado: `ret=1 raio=0.35 mu=0.90 ganho=77
+stamp=1792693693` e, na chamada seguinte, `ret2=0` (idempotente).
+
+---
+
 ## O que foi investigado e **não** é bug
 
 Registrado para não ser reaberto:

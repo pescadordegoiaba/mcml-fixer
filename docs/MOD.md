@@ -449,6 +449,22 @@ mcml-fixer --mod-status                   # mostra os dois blocos
 do composto), `share` de peso no eixo motriz, `embreagem` (0 = desligada) e `inercia`
 (quanto o motor demora a subir de giro livre).
 
+### Vale também para carro já salvo
+
+O CLI grava `[mod] rev=<epoch>` a cada escrita. No boot o jogo lê esse `rev`; se ele for
+diferente do `cfg_stamp` gravado no carro, a config é **aplicada ao carro salvo**
+(`global.mod_cfg_aplicar`, no máximo 1×/s):
+
+- `phys_cfg` é refeito com `[fisica]`;
+- `dist_cfg` é refeito com `[distribuidor]` — só se o carro tem distribuidor instalado
+  (não força peça em quem não comprou);
+- `desgaste` do platinado não é tocado (é estado, não configuração).
+
+Depois disso o `cfg_stamp` acompanha o `rev`, então rodar o jogo de novo não reaplica nada.
+Ajustes feitos no F6 continuam valendo: o F6 não escreve no ini, logo não muda o `rev`.
+Quando você quiser que o ini volte a mandar, basta um `--phys`/`--mod-set` (qualquer
+chave), que gera um `rev` novo.
+
 ## 10. Verificação
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no
