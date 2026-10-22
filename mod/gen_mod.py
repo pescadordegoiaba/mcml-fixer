@@ -67,13 +67,35 @@ global.mod_dist_car = function() {
     return global.car_data[global.vehicles_array];
 };
 
+// tipo do motor: -1 = indefinido, 0 = injetado, 1 = carburado.
+// carburador = -1 e o valor de fabrica (EstruturaSalvamento:129) e o jogo so
+// resolve para 1/3 dentro da Garage (obj_player Step:78-93). Ler -1 como
+// injetado era o BUG 14: gravava distribuidor=0 no carro salvo e matava o F6.
+global.mod_dist_tipo = function(car) {
+    if (is_undefined(car)) return -1;
+    if (!variable_struct_exists(car, "carburador")) return -1;
+    var _c = car.carburador;
+    if (is_undefined(_c)) return -1;
+    // bicos instalados = injetado, nao importa o que diga o carburador
+    if (variable_struct_exists(car, "bicos") && car.bicos > 0) return 0;
+    if (_c > 0) return 1;
+    if (_c == 0) return 0;
+    // indeterminado: fail-open, o unico efeito do mod e instalar distribuidor
+    return 1;
+};
+
 global.mod_dist_modelo = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return 0;
+    var _t = global.mod_dist_tipo(car);
+    if (_t < 0) return 0;
     // todo motor carburado sai de fabrica com o distribuidor original
     if (!variable_struct_exists(car, "distribuidor") || is_undefined(car.distribuidor)) {
-        var _carb = variable_struct_exists(car, "carburador") ? car.carburador : 0;
-        car.distribuidor = (_carb > 0) ? 1 : 0;
+        car.distribuidor = (_t == 1) ? 1 : 0;
+    }
+    // cura carro estragado pela versao antiga (gravou 0 com carburador -1)
+    else if (_t == 1 && car.distribuidor == 0) {
+        car.distribuidor = 1;
     }
     return car.distribuidor;
 };
@@ -160,7 +182,7 @@ global.mod_dist_comprar = function(modelo) {
     var car = global.mod_dist_car();
     var e = global.mod_dist_estado;
     if (is_undefined(car)) { e.aviso = "sem carro selecionado"; return; }
-    if (car.carburador <= 0) { e.aviso = "so instala em motor carburado"; return; }
+    if (global.mod_dist_tipo(car) != 1) { e.aviso = "so instala em motor carburado"; return; }
     if (global.mod_dist_modelo() == modelo) { e.aviso = "este modelo ja esta instalado"; return; }
     if (modelo == 1) {
         // voltar ao original de fabrica: nao custa nada, mas nao devolve o dinheiro
@@ -249,7 +271,7 @@ global.mod_dist_fator = function() {
     var e = global.mod_dist_estado;
     var car = global.mod_dist_car();
     if (is_undefined(car)) return 1;
-    if (car.carburador <= 0) return 1;
+    if (global.mod_dist_tipo(car) != 1) return 1;
     var modelo = global.mod_dist_modelo();
     if (modelo <= 0) return 1;
     var d = global.mod_dist_cfg();
@@ -309,7 +331,7 @@ global.mod_dist_dano = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return;
     if (global.engine != 1) return;
-    if (car.carburador <= 0) return;
+    if (global.mod_dist_tipo(car) != 1) return;
     var modelo = global.mod_dist_modelo();
     if (modelo <= 0) return;
     var d = global.mod_dist_cfg();
@@ -364,7 +386,7 @@ global.mod_dist_input = function() {
     }
     if (e.menu == 3) {
         var _cc = global.mod_carb_cfg();
-        if (!is_undefined(_cc) && car.carburador > 0) {
+        if (!is_undefined(_cc) && global.mod_dist_tipo(car) == 1) {
             if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod 3;
             if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + 2) mod 3;
             var _d3 = 0;
@@ -379,7 +401,7 @@ global.mod_dist_input = function() {
                 e.aviso = "";
             }
             if (keyboard_check_pressed(vk_f7)) {
-                var _gi7 = global.mod_carb_gicle_ideal(car.carburador);
+                var _gi7 = global.mod_carb_gicle_ideal(max(1, car.carburador));
                 _cc.lenta = round(_gi7 * 0.35);
                 _cc.agulha = round(_gi7 * 0.90);
                 _cc.borboleta = 50;
@@ -455,9 +477,9 @@ global.mod_carb_ui = function() {
         draw_text(_x + 20, _y + 60, "sem carro selecionado");
         return;
     }
-    draw_text(_x + 12, _y + 8, "CARBURADOR - tipo " + string(car.carburador));
+    draw_text(_x + 12, _y + 8, "CARBURADOR - tipo " + string(max(1, car.carburador)));
     var cfg = global.mod_carb_cfg();
-    if (is_undefined(cfg) || car.carburador <= 0) {
+    if (is_undefined(cfg) || global.mod_dist_tipo(car) != 1) {
         draw_set_color(make_color_rgb(255, 170, 120));
         draw_text(_x + 20, _y + 60, "Este motor e injetado: nao tem carburador para ajustar.");
         draw_set_color(c_white);
@@ -485,7 +507,7 @@ global.mod_carb_ui = function() {
     draw_set_color(make_color_rgb(255, 235, 160));
     draw_text(_x + 30, _y + 158, _d1[e.sel]);
     draw_text(_x + 30, _y + 176, _d2[e.sel]);
-    var _gi = global.mod_carb_gicle_ideal(car.carburador);
+    var _gi = global.mod_carb_gicle_ideal(max(1, car.carburador));
     draw_set_color(make_color_rgb(200, 200, 200));
     draw_text(_x + 30, _y + 214, "gicle principal ideal deste modelo: " + string(_gi));
     draw_set_color(make_color_rgb(170, 200, 255));
@@ -552,8 +574,7 @@ global.mod_dist_loja = function() {
 global.mod_dist_pode = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return false;
-    if (!variable_struct_exists(car, "carburador")) return false;
-    return (car.carburador > 0);
+    return (global.mod_dist_tipo(car) == 1);
 };
 
 // ---- potencia real: hp = torque(Nm) * rpm / K ----
@@ -628,7 +649,7 @@ global.motor_afr_ideal = function(_rpm, _rpm_max, _turbo, _fuel) {
 // AFR do carburador: gicle ideal por tipo + blend do 2o corpo + circuitos do mod
 global.motor_afr = function(_car, _rpm, _rpm_max, _turbo, _fuel) {
     if (is_undefined(_car)) return 14.7;
-    var _carb = global.motor_campo(_car, "carburador");
+    var _carb = (global.mod_dist_tipo(_car) == 1) ? max(1, global.motor_campo(_car, "carburador")) : 0;
     if (_carb <= 0) return 14.7;
     var _tabela_ideal = [38, 42, 46, 48, 50, 53, 56, 60];
     var _tabela_sens = [0.018, 0.022, 0.026, 0.030, 0.034, 0.038, 0.042, 0.048];
@@ -698,7 +719,7 @@ global.motor_desgaste = function(_car) {
 global.motor_torque = function(_car, _rpm, _rpm_max, _afr) {
     var _m = global.motor_pecas(_car);
     _m *= global.phys_engine_fator(global.turbo, global.piston, global.litros);
-    var _carb = global.motor_campo(_car, "carburador");
+    var _carb = (global.mod_dist_tipo(_car) == 1) ? max(1, global.motor_campo(_car, "carburador")) : 0;
     var _afr_eff = _afr;
     if (_carb <= 0) _afr_eff = global.motor_afr_inj(_rpm, _rpm_max, global.turbo, global.fuel, global.injecao);
     _m *= global.motor_mistura_mult(_afr_eff, _rpm, _rpm_max, global.turbo, global.fuel);
@@ -807,7 +828,7 @@ global.mod_carb_cfg = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return undefined;
     if (!variable_struct_exists(car, "carb_cfg") || is_undefined(car.carb_cfg)) {
-        var _gi = global.mod_carb_gicle_ideal(car.carburador);
+        var _gi = global.mod_carb_gicle_ideal(max(1, car.carburador));
         car.carb_cfg = {
             lenta: round(_gi * 0.35),
             agulha: round(_gi * 0.90),

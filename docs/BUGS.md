@@ -458,3 +458,24 @@ necessário um CSX próprio com `try/catch` para extrair as 5498 entradas.
 
 Todos aplicáveis/revertíveis por `mcml-fixer`, sempre a partir do
 `game.unx.orig`, com backup e verificação.
+
+## BUG 14 — F6 morto em carro carburado (distribuidor gravado como 0)
+
+**Sintoma:** carro com carburador, mas o menu F6 nao abre ("este motor e injetado").
+
+**Causa:** `carburador = -1` e o valor de fabrica (`EstruturaSalvamento.gml:129`). O jogo
+so resolve para `1` (4 cil) ou `3` (6 cil) dentro da **Garage**, so quando `bicos == 0`
+e so para 15 motores de uma lista branca (`obj_player Step:78-93`).
+
+O mod lia o carro em qualquer sala (via `mod_cfg_aplicar` no Draw GUI), via `-1 <= 0`,
+concluia "injetado" e **gravava `car.distribuidor = 0`** — que vai para o save. Quando o
+jogo finalmente resolvia o carburador, `distribuidor` ja estava 0 para sempre, e
+`mod_dist_pode()` desligava a UI inteira.
+
+**Fix:** `mod_dist_tipo(car)` resolve `-1/0/1` num lugar so (bicos > 0 = injetado;
+`carburador > 0` = carburado; `-1` = fail-open carburado). `mod_dist_modelo` nao grava
+decisao desconhecida e auto-cura carro com `distribuidor == 0` + carburador.
+
+**Teste:** `mod/carb_test.csx` (roda no `Start_0_Create`).
+Antes: `tem_tipo=0 pode_-1=0 modelo_-1=0 dist=0`.
+Depois: `tem_tipo=1 pode_-1=1 modelo_-1=1 dist=1 tipo_0=0 pode_0=0 cura=1 dist=1`.
