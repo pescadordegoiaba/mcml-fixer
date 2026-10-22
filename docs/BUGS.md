@@ -479,3 +479,37 @@ decisao desconhecida e auto-cura carro com `distribuidor == 0` + carburador.
 **Teste:** `mod/carb_test.csx` (roda no `Start_0_Create`).
 Antes: `tem_tipo=0 pode_-1=0 modelo_-1=0 dist=0`.
 Depois: `tem_tipo=1 pode_-1=1 modelo_-1=1 dist=1 tipo_0=0 pode_0=0 cura=1 dist=1`.
+
+## BUG 17 — item de câmbio novo não podia ser usado (sem `use_func`)
+
+**Sintoma:** o câmbio de 7 ou 8 marchas aparece no inventário, o jogador clica em "use" e
+nada acontece.
+
+**Causa:** o helper `_r(...)` (`03949_Inventory.gml:12-26`) cria o item com 9 campos e
+**sem `use_func`**. Os câmbios 1..7 ganham esse campo num laço explícito, no array
+`_cambio_keys` (linha 521). `manual_7m` e `manual_8m` ficaram fora da lista, então
+`inventory_use_item` (`:1098`) saía no guarda `if (!variable_struct_exists(data, "use_func"))`
+— com um `show_debug_message` que ninguém vê.
+
+**Fix:** os dois ids entram em `_cambio_keys`, que é o único lugar que atribui
+`item_use_dinamometro` aos câmbios.
+
+**Teste:** `mod/cambio_use_test.csx`.
+Antes: `use6=1 use7=0 use8=0 clique7=0`. Depois: `use6=1 use7=1 use8=1 clique7=1`.
+
+## BUG 18 — `_inventory_get_item_by_campo("cambio")` sempre vazio
+
+**Causa:** os itens de câmbio não têm `campo_val`, então a função cai em
+`_inventory_campo_value`, que devolve a **posição 0-based** do item na lista de campo
+`"cambio"`; ela é comparada com `car.cambio`, que é **1-based** (1..9) e conta só os 7
+câmbios originais. Nunca casa.
+
+**Fix:** `campo_val` 1..9 nos 12 itens, via `struct_get_from_hash` + `variable_get_hash`
+(a forma que o próprio jogo usa nas linhas 321-336).
+
+**Nota:** o valor devolvido (`_cambio_atual` em `_dino_executar_swap`, linha 2985) é
+atribuído e **não é usado** depois — é código morto do jogo. Ou seja, o `campo_val`
+conserta a busca, mas **não** faz o câmbio antigo voltar ao inventário (isso teria que ser
+implementado à parte).
+
+**Teste:** com `car.cambio = 3`, a função devolve `manual_6m` (antes: vazio).

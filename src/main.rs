@@ -1871,6 +1871,14 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
     "var _spacing = 35;",
     "var _spacing = (obj_player.max_gears > 6) ? 26 : 35;", false);
 
+// ---- BUG 17: itens novos nao herdam use_func (_r nao define) ----
+// o laco _cambio_keys e o unico lugar que atribui item_use_dinamometro aos cambios
+g.QueueFindReplace("gml_GlobalScript_Inventory", "var _cambio_keys = [\"transmissao_original\", \"transmissao_forjada\", \"transmissao_desempenho\", \"manual_4m\", \"manual_5m\", \"manual_6m\", \"auto_4m\", \"auto_5m\", \"auto_6m\", \"gsd_6m\"];", "var _cambio_keys = [\"transmissao_original\", \"transmissao_forjada\", \"transmissao_desempenho\", \"manual_4m\", \"manual_5m\", \"manual_6m\", \"auto_4m\", \"auto_5m\", \"auto_6m\", \"gsd_6m\", \"manual_7m\", \"manual_8m\"];", false);
+
+// ---- BUG 18: campo_val real (1..9) para _inventory_get_item_by_campo("cambio") ----
+// sem campo_val ele compara posicao 0-based com cambio 1-based e nunca acha
+g.QueueFindReplace("gml_GlobalScript_Inventory", "_r(\"manual_8m\", \"Manual 8 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");", "_r(\"manual_8m\", \"Manual 8 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_4m\")).campo_val = 1;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_5m\")).campo_val = 2;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_6m\")).campo_val = 3;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"auto_4m\")).campo_val = 4;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"auto_5m\")).campo_val = 5;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"auto_6m\")).campo_val = 6;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"gsd_6m\")).campo_val = 7;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_7m\")).campo_val = 8;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_8m\")).campo_val = 9;", false);
+
 g.QueueFindReplace("gml_GlobalScript_GetNameParts",
     @"        default:
             return [];
@@ -2071,6 +2079,8 @@ ScriptMessage($"MARK cambio_preco={(s5.Contains("45000") && s5.Contains("85000")
 ScriptMessage($"MARK cambio_item={(s7.Contains("manual_8m") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cambio_dlv={(s6.Contains("manual_8m") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cambio_mini={(s10.Contains("manual_8m") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_usefunc={(s7.Contains("\"manual_8m\"]") && s7.Contains("_cambio_keys") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_campoval={(s7.Contains("campo_val = 9") ? "ok" : "ausente")}");
 ScriptMessage($"MARK dev_cash={(s1.Contains("global.dev_cash_aplicar") && s1.Contains("global.cash_guard") ? "ok" : "ausente")}");
 ScriptMessage($"MARK no_tracao_pen={(s2.Contains("if (_mod_points > 5)") ? "ausente" : "ok")}");
 ScriptMessage($"MARK no_launch_pen={(s2.Contains("_launch_grip") ? "ausente" : "ok")}");

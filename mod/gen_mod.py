@@ -1193,6 +1193,22 @@ NOMES = [
     ('"GSD 6-ст."]',              '"GSD 6-ст.", "7-ст. механика", "8-ст. механика"]'),
 ]
 
+# ---- fix do use_func dos cambios novos (BUG 17) e campo_val (BUG 18) ----
+CK_OLD = _cq('var _cambio_keys = ["transmissao_original", "transmissao_forjada", "transmissao_desempenho", "manual_4m", "manual_5m", "manual_6m", "auto_4m", "auto_5m", "auto_6m", "gsd_6m"];')
+CK_NEW = _cq('var _cambio_keys = ["transmissao_original", "transmissao_forjada", "transmissao_desempenho", "manual_4m", "manual_5m", "manual_6m", "auto_4m", "auto_5m", "auto_6m", "gsd_6m", "manual_7m", "manual_8m"];')
+
+CV_OLD = _cq('_r("manual_8m", "Manual 8 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");')
+CV_NEW = _cq("""_r("manual_8m", "Manual 8 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");
+struct_get_from_hash(global.item_db, variable_get_hash("manual_4m")).campo_val = 1;
+struct_get_from_hash(global.item_db, variable_get_hash("manual_5m")).campo_val = 2;
+struct_get_from_hash(global.item_db, variable_get_hash("manual_6m")).campo_val = 3;
+struct_get_from_hash(global.item_db, variable_get_hash("auto_4m")).campo_val = 4;
+struct_get_from_hash(global.item_db, variable_get_hash("auto_5m")).campo_val = 5;
+struct_get_from_hash(global.item_db, variable_get_hash("auto_6m")).campo_val = 6;
+struct_get_from_hash(global.item_db, variable_get_hash("gsd_6m")).campo_val = 7;
+struct_get_from_hash(global.item_db, variable_get_hash("manual_7m")).campo_val = 8;
+struct_get_from_hash(global.item_db, variable_get_hash("manual_8m")).campo_val = 9;""")
+
 PATCH = f'''using System;
 using UndertaleModLib;
 using UndertaleModLib.Models;
@@ -1395,6 +1411,14 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0",
     "var _spacing = 35;",
     "var _spacing = (obj_player.max_gears > 6) ? 26 : 35;", false);
+
+// ---- BUG 17: itens novos nao herdam use_func (_r nao define) ----
+// o laco _cambio_keys e o unico lugar que atribui item_use_dinamometro aos cambios
+g.QueueFindReplace("gml_GlobalScript_Inventory", "{CK_OLD}", "{CK_NEW}", false);
+
+// ---- BUG 18: campo_val real (1..9) para _inventory_get_item_by_campo("cambio") ----
+// sem campo_val ele compara posicao 0-based com cambio 1-based e nunca acha
+g.QueueFindReplace("gml_GlobalScript_Inventory", "{CV_OLD}", "{CV_NEW}", false);
 
 g.Import();
 ScriptMessage("MARK distribuidor=v2 instalado");

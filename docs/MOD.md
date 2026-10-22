@@ -373,6 +373,12 @@ limite de giro é `rpm / gear_ratios[gear-1]` e a IA copia as razões do jogador
 - instalação: switch do minigame (`manual_7m` → 8, `manual_8m` → 9, `at = 0` manual)
 - entrega: `DeliveryGetItemId` (case 6, níveis 10 e 11)
 
+**Como se instala:** fluxo nativo do jogo — oficina do Tião (sala `Dinamometro`) →
+inventário → clicar no câmbio → `use` → confirmar ($3.500 de mão de obra). O clique
+depende de `use_func` no item, que é atribuído **só** pelo laço `_cambio_keys` em
+`scr_inventory_items_init`. Item de câmbio novo tem que entrar nessa lista, senão
+`inventory_use_item` desiste em silêncio.
+
 **Ajuste das marchas:** com o "Forjar Câmbio" (`cambio_mod = 1`) o caderno
 (`obj_noguiin_Draw_0`) lista `max_gears` linhas e grava em `gears_mod`. O espaçamento
 passa de 35 para 26 px quando há mais de 6 marchas, senão a 8ª linha invade o texto de
