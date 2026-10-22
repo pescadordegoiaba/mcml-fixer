@@ -1,7 +1,8 @@
 # Catálogo de bugs — My Car My Life no Linux
 
-Documento técnico dos seis defeitos encontrados no jogo e das duas armadilhas de
-processo que apareceram durante o desenvolvimento do `mcml-fixer`.
+Documento técnico dos dez defeitos encontrados no jogo (seis de plataforma e
+quatro que apareceram ao construir o mod Distribuidor + Carburador) e das duas
+armadilhas de processo que surgiram durante o desenvolvimento do `mcml-fixer`.
 
 Cada item traz: **sintoma** (o que o jogador via), **evidência** (como foi medido),
 **causa raiz** (o que no jogo/binário causava), **correção** e **verificação**.
@@ -224,6 +225,99 @@ botão COMPRAR do XLO voltam. Marcador `crt_scale=fixed`.
 
 ---
 
+## BUG 7 — Sprite externo do mod não carrega (e derruba o jogo)
+
+**Sintoma.** No catálogo de peças externas do TOTORTO o ícone do distribuidor
+não aparecia e o fallback do carburador saía desalinhado. Em outra tentativa, o
+jogo abortava com:
+
+```
+draw sprite ext argument 1 invalid reference to (sprite) - requested -1 max is 889
+```
+
+**Evidência.** Instrumentando `obj_crt_Draw_77` (roda na tela de idiomas, sem
+precisar de input) para escrever um arquivo no save:
+
+```
+wd=/home/.../My Car My Life/assets/      gs=/home/gullin/.config/My_Car_My_Life//
+file_exists("diag.txt")                              -> 1
+file_exists("assets/Mod_assets/x.png")               -> 0
+file_exists("/caminho/absoluto/x.png")               -> 0
+sprite_add("distribuidor_icon.png")  (raiz do save)  -> sprite 1625, 256x256
+```
+
+**Causa raiz.** Duas coisas somadas:
+
+1. este runner é **sandboxed**: `file_exists` e `sprite_add` só enxergam
+   arquivos na **raiz** da pasta de save — subpasta e caminho absoluto
+   retornam `-1`/`0`;
+2. `working_directory` aponta para `.../assets/`, não para a raiz do jogo, então
+   `working_directory + "assets/Mod_assets/..."` virava `assets/assets/...`.
+
+Com o `sprite_add` devolvendo `-1`, o desenho passava `-1` para
+`draw_sprite_ext` e o runner abortava.
+
+**Correção.** O instalador copia `distribuidor.png` e `distribuidor_icon.png`
+para `~/.config/My_Car_My_Life/` e o mod carrega
+`sprite_add("distribuidor_icon.png")`. Todo desenho passa por
+`mod_dist_draw_icon()`, que centraliza por altura e, sem arte, desenha um
+marcador alinhado — nunca um índice inválido.
+
+**Verificação.** `file_exists` e `sprite_add` retornando 1 e sprite válido no
+diag; boot sem `ERROR in`; 14 marcadores verdes.
+
+---
+
+## BUG 8 — O menu do mod (F6) não abria
+
+**Sintoma.** F6 não fazia nada em carro carburado.
+
+**Causa raiz.** A UI estava atrás de `if (global.mod_dist_ativo || menu == 1)`,
+e `mod_dist_ativo` só virava 1 quando o carro **já tinha** distribuidor — ou
+seja, era impossível comprar o primeiro.
+
+**Correção.** `mod_dist_pode()` (carro existe e `carburador > 0`) decide a UI, e
+o hook chama a função sempre; `mod_dist_ativo` é recalculado dentro dela.
+
+---
+
+## BUG 9 — UI do mod piscando
+
+**Sintoma.** O painel aparecia e desaparecia a cada frame.
+
+**Causa raiz.** O desenho estava no `Draw_0` (espaço de sala), e o passe CRT
+(`obj_crt_Draw_77`, depth 400) redesenha a `application_surface` por cima no
+mesmo frame — o painel era sobrescrito.
+
+**Correção.** Desenhar **só** no Draw GUI (`obj_noguiin_Draw_64`), um ponto
+único por frame, sem token de frame.
+
+---
+
+## BUG 10 — O distribuidor rendia pouco (bônus limitado duas vezes)
+
+**Sintoma.** Ajustar o distribuidor mudava quase nada no carro.
+
+**Evidência.** Rodando o modelo com os valores padrão:
+
+```
+Original, 3000 rpm: bônus bruto +56,4%  ->  aplicado +25,4%
+```
+
+**Causa raiz.** O parâmetro `ganho` era multiplicado **e** limitado ao teto do
+modelo: `bonus *= min(ganho, lim[7]) / 100` com `ganho = 50` e `lim[7] = 45`
+para o Original. Resultado: 50% × 45% = 22,5% de bônus máximo. Além disso o
+fator de faísca `(0,94 + 0,08·q)` penalizava mesmo com `q = 1`.
+
+**Correção.** O teto é o do modelo (Original 45%, Competição 100%) e `ganho`
+regula quanto dele é usado (padrão 100); o fator de faísca só penaliza quando
+`q < 1`. Config antiga migra uma vez (`ver: 2`).
+
+**Verificação.** Mesmo cenário passa a +45,0% (Original) e +62,1%
+(Competição), comparável ao nativo (−25% a +60% em `global.torque`).
+
+---
+
 ## O que foi investigado e **não** é bug
 
 Registrado para não ser reaberto:
@@ -296,6 +390,10 @@ necessário um CSX próprio com `try/catch` para extrair as 5498 entradas.
 | 4 | cursor do sistema | objeto órfão | `Persistent` + `instance_create_depth` |
 | 5 | barra não clica | GUI ≠ view | `display_set_gui_size(1280,720)` |
 | 6 | barra/botões somem | passe CRT | escala da origem do recorte |
+| 7 | sprite do mod não carrega | sandbox do runner | arte na raiz do save + fallback alinhado |
+| 8 | F6 não abria | gate em `mod_dist_ativo` | `mod_dist_pode()` |
+| 9 | UI piscando | draw de sala + CRT | desenhar no Draw GUI |
+| 10 | distribuidor rendia pouco | `ganho` limitado duas vezes | teto do modelo + `ganho` como fração |
 
 Todos aplicáveis/revertíveis por `mcml-fixer`, sempre a partir do
 `game.unx.orig`, com backup e verificação.

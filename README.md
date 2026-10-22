@@ -2,7 +2,8 @@
 
 CLI + GUI em Rust (egui/eframe) que faz **My Car My Life** (GameMaker Studio
 1.4, YoYo Linux Runner V1.3) rodar direito em Linux moderno: launch, resolução,
-cursor e a UI do PC simulado dentro do jogo.
+cursor e a UI do PC simulado dentro do jogo — e que instala o **mod
+Distribuidor + Carburador** dentro do `game.unx`.
 
 Tudo é aplicável e revertível, sempre com backup, e sem alterar nada fora da
 pasta do jogo.
@@ -29,6 +30,91 @@ verificação — está em **[`docs/BUGS.md`](docs/BUGS.md)**.
 - [`docs/SOURCE.md`](docs/SOURCE.md) — passeio pela source inteira: constantes,
   cada função, os scripts CSX embutidos, fluxo de dados, GUI e artefatos em
   runtime.
+- [`docs/MOD.md`](docs/MOD.md) — o mod Distribuidor + Carburador: onde ele se
+  pendura no código nativo, as fórmulas de avanço e de mistura, o menu, a
+  integração no TOTORTO e a regra de sandbox que decide onde a arte pode ficar.
+
+## Mod Distribuidor + Carburador
+
+Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
+
+```bash
+mcml-fixer --mod-install                 # aplica (backup automatico)
+mcml-fixer --mod-check                   # 14 marcadores dentro do decompilado
+mcml-fixer --mod-status                  # estado + caminho do ini
+mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
+mcml-fixer --mod-uninstall               # restaura o backup
+```
+
+### Distribuidor
+
+Peça real do carro (`car.distribuidor` 0/1/2) com física de avanço:
+
+```
+avanço = inicial + centrífugo(rpm, 2 estágios) + vácuo(MAP, 5–15 inHg)
+```
+
+O bônus segue a mesma curva por partes que o jogo usa na ignição dos carros
+com ECU, e é aplicado **no mesmo lugar**:
+
+```gml
+if (global.mod_dist_ativo) {
+    global.torque *= global.mod_dist_fator();          // igual ao nativo
+    global.ignicao = global.mod_dist_estado.avanco;    // ignição de verdade
+}
+```
+
+Ou seja: mexe em torque (aceleração, dinamômetro, HUD) e na ignição, não só num
+número de tela. Dois modelos com limites próprios:
+
+| | Original | Competição |
+|---|---|---|
+| avanço inicial | 0–12° | 0–20° |
+| centrífugo | 0–20° | 0–30° |
+| rpm de fim | 5500 | 7500 |
+| vácuo | 0–14° | 0–20° |
+| dwell | 38–52 | 30–60 |
+| ganho máximo | 45% | 100% |
+| preço | $800 (reposição) | $12.000 |
+
+Todo motor **carburado** sai de fábrica com o Original; injetado não recebe.
+
+### Carburador
+
+O jogo já tinha `gicle`, `gicle_2nd` e oito tipos de carburador. O mod soma os
+circuitos que faltavam **na linha do desvio de mistura**, então tudo que o
+jogo já faz (hp, torque, aquecimento por mistura rica, corte por mistura
+pobre) passa a reagir:
+
+| Parâmetro | Faixa | Onde age |
+|---|---|---|
+| Giclê de lenta | 20–60 | abaixo de 8% do giro |
+| Agulha (média) | 20–80 | pico em 45% do giro |
+| Borboleta | 0–100 | saída / baixa |
+
+Efeito medido nas fórmulas nativas (gasolina, carburador tipo 5):
+
+```
+cenario                   AFR     hp    torque
+neutro, 3000rpm         13.52  1.039  0.722
+agulha +10              12.14  1.146  0.796   <- melhor
+agulha +20              10.76  1.011  0.702   <- passou, afogou
+agulha -10              14.90  0.904  0.628
+lenta +10                9.95  0.927  0.644
+lenta -10               17.38  0.671  0.466
+```
+
+### Menu
+
+`F6` abre · `TAB` cicla Ajuste → Loja → Carburador · `↑↓` escolhe · `←→`
+ajusta · `1`/`2` compram · `3` volta ao original · `F7` padrão.
+
+Cada parâmetro traz duas linhas de explicação e, no distribuidor,
+**mín / atual / máx** calculados rodando o modelo com o parâmetro nos extremos.
+
+A loja fica no **TOTORTO**, categoria própria no fim da lista (índice 18), com
+os dois itens e entrega normal do jogo. O detalhe completo está em
+[`docs/MOD.md`](docs/MOD.md).
 
 ## Como funciona por dentro
 
@@ -75,6 +161,11 @@ mcml-fixer --patch-gen8 1280x1024   # patch só no GEN8 (cria game.unx.orig)
 mcml-fixer --revert-gen8            # restaura o game.unx
 mcml-fixer --play 1920x1080         # inicia via gamescope
 mcml-fixer --play --no-gamescope    # inicia direto
+mcml-fixer --mod-install            # instala o mod Distribuidor + Carburador
+mcml-fixer --mod-check              # confere o mod dentro do game.unx
+mcml-fixer --mod-status             # estado do mod + caminho do ini
+mcml-fixer --mod-set k=v            # defaults do mod (carros novos)
+mcml-fixer --mod-uninstall          # remove o mod (restaura backup)
 mcml-fixer --dir "/caminho/do/jogo" --check
 ```
 

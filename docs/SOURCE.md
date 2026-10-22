@@ -195,7 +195,111 @@ Verificação de verdade:
 
 ---
 
-## 7. Início do jogo
+## 7. Mod Distribuidor + Carburador
+
+O mod não é um binário separado: é um segundo script CSX embutido
+(`MOD_PATCH_CSX`) mais um punhado de funções Rust no mesmo `main.rs`. Ele
+aplica dentro do `game.unx` e é revertível.
+
+### `struct ModOpts`
+
+Parâmetros que viram a config inicial do mod. Defaults:
+
+```
+ativo=1  avanco_inicial=10  cent_total=22  rpm_inicio=1000  rpm_fim=3200
+curva=1  vac_total=12  vac_limiar=0.0  dwell=45  desgaste=0  ganho=100
+```
+
+Métodos:
+
+- `ModOpts::to_ini()` — serializa no formato `chave=valor`, uma por linha.
+- `ModOpts::set(k, v)` — aplica uma chave vinda do CLI (`--mod-install k=v`);
+  devolve `false` para chave desconhecida (o `main` transforma em aviso, não em
+  erro).
+
+### `mod_ini_path() -> PathBuf` / `mod_write_ini(o) -> Result<PathBuf, String>`
+
+Gravam `~/.config/My_Car_My_Life/mod_distribuidor.ini`. Esse arquivo é o
+**default para carros novos**; o mod lê no `Create` e copia para
+`car.dist_cfg` do carro que ainda não tem config.
+
+### `gen8_set_raw(data, w, h) -> Result<(), String>`
+
+Escreve largura/altura no `GEN8` **sem** criar backup. É usado só na cópia
+temporária que vai para o UTMT, porque o UTMT recusa arquivo com o `GEN8`
+alterado de forma inconsistente com o checksum do chunk (ARMADILHA 2).
+
+### `mod_state(game_dir) -> Option<String>`
+
+Lê o marcador `.mcml-mod-distribuidor`. É o teste rápido de "instalado?" — não
+abre o `game.unx`.
+
+### `mod_install(game_dir, o, log)`
+
+Ordem exata, e por que:
+
+1. confere `assets/game.unx`, UTMT e se já não está instalado;
+2. **backup** para `assets/game.unx.bak-mod-distribuidor` (nunca sobrescreve um
+   backup existente);
+3. lê o `GEN8` atual, copia para `game.unx.modtmp` e força 1280x720 no
+   temporário;
+4. roda o UTMT com `MOD_PATCH_CSX`;
+5. copia o resultado por cima do `game.unx` e **restaura o `GEN8` original**;
+6. grava o `.ini`;
+7. copia `distribuidor.png` e `distribuidor_icon.png` de `assets/Mod_assets/`
+   para a **raiz** de `~/.config/My_Car_My_Life/` (regra do sandbox, BUG 7);
+8. grava o marcador com a config usada.
+
+Todos os passos alimentam o mesmo `Vec<String>` de log; falha de arte ou de ini
+é aviso, não aborta (o mod já está aplicado nesse ponto).
+
+### `mod_uninstall(game_dir, log)`
+
+Copia o backup de volta e remove o marcador. Não apaga config nem arte.
+
+### `mod_check(game_dir, log)`
+
+Copia o `game.unx` para um temporário, roda o UTMT com `MOD_CHECK_CSX` e
+imprime cada linha `MARK ...`. O script só **lê** o decompilado:
+
+```
+versao  item  limites  dano  potencia  ui
+loja  shop_tile  shop_preco  shop_entrega  shop_instala
+carb  carb_hook  torque
+```
+
+`torque` é o marcador que garante o efeito real: confere
+`global.torque *= global.mod_dist_fator()` **e**
+`global.ignicao = global.mod_dist_estado.avanco` no Step do player.
+
+### `MOD_PATCH_CSX`
+
+Gera o `GML_INIT` (funções `global.mod_*`), faz cinco `QueueFindReplace` com
+âncora única e dois `QueueAppend` (`obj_player_Step_0` e
+`obj_noguiin_Draw_64`), mais o merge do patch do TOTORTO. As funções GML estão
+documentadas em [`MOD.md`](MOD.md); as âncoras, na tabela da seção 1 daquele
+arquivo.
+
+Detalhe de geração: replacements que precisam de quebra de linha usam uma única
+linha com `;` em vez de `\n`, porque o gerador é uma f-string e o escape
+acabava virando newline literal dentro do literal C# do CSX (erro de
+compilação no UTMT).
+
+### Estado por carro
+
+O mod guarda tudo no struct do veículo, dentro do save do jogo:
+
+| Campo | O quê |
+|---|---|
+| `car.distribuidor` | 0 nenhum, 1 original, 2 competição |
+| `car.dist_cfg` | avanço, centrífugo, rpm, curva, vácuo, dwell, desgaste, ganho, `ver` |
+| `car.carb_cfg` | `lenta`, `agulha`, `borboleta` |
+
+Nada é gravado fora do save do jogo; o `.ini` é só o molde.
+
+---
+
+## 8. Início do jogo
 
 ### `launch(game_dir, out_w, out_h, use_gamescope) -> Result<u32, String>`
 - redireciona stdout/stderr para `~/.config/mcml-fixer-launch.log`;
@@ -209,7 +313,7 @@ Com o patch nativo aplicado os quatro valores coincidem e a escala é 1:1.
 
 ---
 
-## 8. GUI (`struct App` + `impl eframe::App`)
+## 9. GUI (`struct App` + `impl eframe::App`)
 
 ### `struct App`
 Cache de tudo que a tela mostra: pasta, modos EDID, seleção, `gen8`, `native`,
@@ -235,7 +339,7 @@ correspondente e faz o primeiro `refresh()`.
 
 ---
 
-## 9. `main()` e `run_cli()`
+## 10. `main()` e `run_cli()`
 
 `main()` decide: sem argumentos, abre a GUI; com argumentos, chama `run_cli()`.
 
@@ -264,7 +368,7 @@ Códigos de saída: `0` sempre (as falhas são reportadas na saída padrão com
 
 ---
 
-## 10. Dependências (`Cargo.toml`)
+## 11. Dependências (`Cargo.toml`)
 
 | crate | papel |
 |---|---|
@@ -277,7 +381,7 @@ justifica três árvores de dependências.
 
 ---
 
-## 11. Onde ficam os artefatos em runtime
+## 12. Onde ficam os artefatos em runtime
 
 ```
 <game_dir>/                          libs .so, My_Car_My_Life, My_Car_My_Life.orig
@@ -292,15 +396,21 @@ justifica três árvores de dependências.
 
 ---
 
-## 12. Como validar depois de mexer no código
+## 13. Como validar depois de mexer no código
 
 ```bash
 cargo build --release
 ./target/release/mcml-fixer --check          # não escreve nada
 ./target/release/mcml-fixer --data-check     # ~1 min, relê o arquivo
 ./target/release/mcml-fixer --data-fix       # ~1 min, regera do .orig
+./target/release/mcml-fixer --mod-install    # ~1 min, mod Distribuidor + Carburador
+./target/release/mcml-fixer --mod-check      # 14 marcadores dentro do .unx
 cd "<game_dir>" && ./My_Car_My_Life          # deve chegar em "Entering main loop."
 ```
+
+Teste de campo do mod: carro carburado, `F6` no menu, `TAB` até Carburador,
+mover a agulha ±10 e sentir a diferença; no distribuidor, comparar `min/atual/max`
+do parâmetro selecionado.
 
 Regra: **patch não validado não é entregue**. `--data-check` confirma o texto
 dentro do arquivo, mas não substitui rodar o jogo — um erro de GML (como o da

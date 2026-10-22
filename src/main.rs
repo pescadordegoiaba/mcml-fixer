@@ -544,6 +544,926 @@ ScriptMessage($"MARK crt_scale={(s3.Contains("_kx") ? "fixed" : "original")}");
 /// concorrentes) e o processo roda com `current_dir` no diretorio do UTMT,
 /// que resolve o runtime .NET por caminho relativo. Devolve stdout+stderr;
 /// em caso de falha, a mensagem carrega as tres ultimas linhas da saida.
+/// CSX do mod Distribuidor + Carburador (aplicado pelo UTMT).
+const MOD_PATCH_CSX: &str = r#"using System;
+using UndertaleModLib;
+using UndertaleModLib.Models;
+using UndertaleModLib.Compiler;
+using UndertaleModLib.Decompiler;
+
+EnsureDataLoaded();
+
+var ctx = new GlobalDecompileContext(Data);
+var st = new Underanalyzer.Decompiler.DecompileSettings();
+var g = new CodeImportGroup(Data, ctx, st) { MainThreadAction = MainThreadAction };
+
+g.QueueAppend("gml_RoomCC_Start_0_Create", @"
+// =====================================================================
+//  MOD DISTRIBUIDOR v2  -  item de carro (0 nenhum, 1 original, 2 performance)
+//  instalado por mcml-fixer --mod-install
+// =====================================================================
+global.mod_dist_versao = ""2.0"";
+global.mod_dist_preco = [0, 0, 12000];
+global.mod_dist_nome = [""Nenhum"", ""Original"", ""Competicao""];
+global.mod_dist_def = {
+    avanco_inicial: 10, cent_total: 22, rpm_inicio: 1000, rpm_fim: 3200,
+    curva: 1, vac_total: 12, vac_limiar: 0, dwell: 45, desgaste: 0, ganho: 100
+};
+global.mod_dist_estado = { menu: 0, sel: 0, aviso: """", spr: -1, spr_try: 0, rpm: 800, map: 0, cent: 0, vac: 0, avanco: 10, ideal: 0, bonus: 0, q: 1, knock: 0, dwell_ef: 45, dwell_ms: 5, tok: -1, icon: -1, icon_try: 0 };
+global.mod_dist_ativo = 0;
+
+global.mod_dist_car = function() {
+    if (!is_array(global.car_data)) return undefined;
+    if (global.vehicles_array < 0 || global.vehicles_array >= array_length(global.car_data)) return undefined;
+    return global.car_data[global.vehicles_array];
+};
+
+global.mod_dist_modelo = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return 0;
+    // todo motor carburado sai de fabrica com o distribuidor original
+    if (!variable_struct_exists(car, ""distribuidor"") || is_undefined(car.distribuidor)) {
+        var _carb = variable_struct_exists(car, ""carburador"") ? car.carburador : 0;
+        car.distribuidor = (_carb > 0) ? 1 : 0;
+    }
+    return car.distribuidor;
+};
+
+// limites fisicos por modelo: [ini_min, ini_max, cent_max, rpm_fim_max, vac_max, dwell_min, dwell_max, ganho_max]
+global.mod_dist_limites = function(modelo) {
+    if (modelo == 1) return [0, 12, 20, 5500, 14, 38, 52, 45];
+    return [0, 20, 30, 7500, 20, 30, 60, 100];
+};
+
+// configuracao salva junto com o carro (persiste no save do jogo)
+global.mod_dist_cfg = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return global.mod_dist_def;
+    if (!variable_struct_exists(car, ""dist_cfg"")) car.dist_cfg = undefined;
+    if (is_undefined(car.dist_cfg)) {
+        car.dist_cfg = {
+            avanco_inicial: global.mod_dist_def.avanco_inicial,
+            cent_total: global.mod_dist_def.cent_total,
+            rpm_inicio: global.mod_dist_def.rpm_inicio,
+            rpm_fim: global.mod_dist_def.rpm_fim,
+            curva: global.mod_dist_def.curva,
+            vac_total: global.mod_dist_def.vac_total,
+            vac_limiar: global.mod_dist_def.vac_limiar,
+            dwell: global.mod_dist_def.dwell,
+            desgaste: 0,
+            ganho: global.mod_dist_def.ganho,
+            ver: 2
+        };
+    }
+    // config antiga (ganho vinha 50 e diluia o bonus): sobe uma vez
+    if (!variable_struct_exists(car.dist_cfg, ""ver"")) {
+        car.dist_cfg.ver = 2;
+        car.dist_cfg.ganho = 100;
+    }
+    return car.dist_cfg;
+};
+
+global.mod_dist_comprar = function(modelo) {
+    var car = global.mod_dist_car();
+    var e = global.mod_dist_estado;
+    if (is_undefined(car)) { e.aviso = ""sem carro selecionado""; return; }
+    if (car.carburador <= 0) { e.aviso = ""so instala em motor carburado""; return; }
+    if (global.mod_dist_modelo() == modelo) { e.aviso = ""este modelo ja esta instalado""; return; }
+    if (modelo == 1) {
+        // voltar ao original de fabrica: nao custa nada, mas nao devolve o dinheiro
+        car.distribuidor = 1;
+        car.dist_cfg = undefined;
+        global.mod_dist_cfg();
+        e.aviso = ""distribuidor original reinstalado"";
+        global.mod_dist_ativo = 1;
+        return;
+    }
+    var preco = global.mod_dist_preco[modelo];
+    if (global.cash < preco) { e.aviso = ""faltam $"" + string(preco - global.cash); return; }
+    global.cash -= preco;
+    car.distribuidor = modelo;
+    car.dist_cfg = undefined;
+    global.mod_dist_cfg();
+    e.aviso = ""comprado: "" + global.mod_dist_nome[modelo];
+    global.mod_dist_ativo = 1;
+};
+
+global.mod_dist_remover = function() {
+    var car = global.mod_dist_car();
+    var e = global.mod_dist_estado;
+    if (is_undefined(car)) return;
+    var m = global.mod_dist_modelo();
+    if (m <= 1) { e.aviso = ""ja esta com o original de fabrica""; return; }
+    global.cash += floor(global.mod_dist_preco[m] * 0.5);
+    car.distribuidor = 1;
+    car.dist_cfg = undefined;
+    e.aviso = ""voltou ao original (+$"" + string(floor(global.mod_dist_preco[m] * 0.5)) + "")"";
+    global.mod_dist_ativo = 1;
+};
+
+global.mod_dist_padrao_modelo = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return;
+    car.dist_cfg = undefined;
+    global.mod_dist_cfg();
+};
+
+// limite de detonacao depende do carro: compressao (pistao), cabecote e combustivel
+global.mod_dist_knock_limite = function(car) {
+    var lim = 34;
+    if (car.pistao >= 3) lim -= 3;
+    if (car.pistao >= 4) lim -= 1;
+    if (car.cabecote >= 3) lim += 1;
+    if (global.fuel == 2) lim += 3;
+    if (global.fuel == 3) lim += 5;
+    if (global.fuel == 4) lim += 7;
+    return lim;
+};
+
+global.mod_dist_calcular = function() {
+    var e = global.mod_dist_estado;
+    var modelo = global.mod_dist_modelo();
+    if (modelo <= 0) return 0;
+    var d = global.mod_dist_cfg();
+    var lim = global.mod_dist_limites(modelo);
+    var _rpm = clamp(global.rpm, 800, 8000);
+    var _map = clamp(global.turbo_pressure, -0.8, 4);
+    var _ini = d.rpm_inicio;
+    var _fim = max(_ini + 100, min(d.rpm_fim, lim[3]));
+    // curva de dois estagios: duas molas - a primaria entra cedo, a secundaria depois
+    var _faixa = max(100, _fim - _ini);
+    var _div = 0.62;
+    if (d.curva == 0) _div = 0.5;
+    if (d.curva == 2) _div = 0.75;
+    var t1 = clamp((_rpm - _ini) / (_faixa * _div), 0, 1);
+    var t2 = clamp((_rpm - _ini - (_faixa * _div)) / (_faixa * (1 - _div)), 0, 1);
+    var area = min(d.cent_total, lim[2]);
+    var cent = area * ((_div * t1) + ((1 - _div) * t2));
+    // vacuo medido em inHg, como nas curvas de distribuidor: comeca em ~5 inHg e
+    // satura em ~15 inHg (1 inHg = 0.0339 bar). Ported vacuum: nada acima de 0 bar.
+    var _vac_inhg = clamp((0 - _map) / 0.0339, 0, 30);
+    var vac = min(d.vac_total, lim[4]) * clamp((_vac_inhg - 5) / 10, 0, 1);
+    e.rpm = _rpm;
+    e.map = _map;
+    e.cent = cent;
+    e.vac = vac;
+    e.dwell_ef = clamp(d.dwell - (d.desgaste * 0.1), lim[5], lim[6]);
+    e.avanco = clamp(min(d.avanco_inicial, lim[1]) + cent + vac, lim[0], 45);
+    return e.avanco;
+};
+
+global.mod_dist_fator = function() {
+    var e = global.mod_dist_estado;
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return 1;
+    if (car.carburador <= 0) return 1;
+    var modelo = global.mod_dist_modelo();
+    if (modelo <= 0) return 1;
+    var d = global.mod_dist_cfg();
+    var lim = global.mod_dist_limites(modelo);
+    var adv = global.mod_dist_calcular();
+    var tn = clamp((e.rpm - 800) / 7200, 0, 1);
+    var ideal = lerp(14, 38, tn) - (e.map * 3.5);
+    var pos = (clamp((adv - ideal) / 8, -2, 2) + 1) / 2;
+    var bonus = 0;
+    if (pos >= 0.9) bonus = lerp(0.55, 0.6, (pos - 0.9) / 0.1);
+    else if (pos >= 0.7) bonus = lerp(0.4, 0.55, (pos - 0.7) / 0.2);
+    else if (pos >= 0.4) bonus = lerp(0.2, 0.4, (pos - 0.4) / 0.3);
+    else bonus = -power((0.4 - pos) / 0.4, 1.3) * 0.25;
+    // o modelo define o teto de ganho (Original 45%, Competicao 100%) e o
+    // parametro ganho regula quanto desse teto o carro usa. Antes isso era
+    // multiplicado E limitado, o que derrubava o bonus maximo para ~25%.
+    var _cap = lim[7] / 100;
+    if (bonus > _cap) bonus = _cap;
+    bonus *= clamp(d.ganho, 0, 100) / 100;
+    // o angulo de dwell vira tempo de saturacao da bobina: o distribuidor gira a
+    // metade do motor, entao uma volta leva 120000/rpm ms
+    var _dwell_ms = (e.dwell_ef / 360) * (120000 / max(800, e.rpm));
+    // abaixo de ~1.2 ms a faisca enfraquece; acima de ~3.2 ms a bobina satura
+    var q = clamp((_dwell_ms - 1.2) / 2.0, 0, 1);
+    e.dwell_ms = _dwell_ms;
+    e.ideal = ideal;
+    e.bonus = bonus;
+    e.q = q;
+    // igual ao nativo: bonus cheio, sem diluicao. A faisca fraca (q<1) so piora.
+    var f = (1 + bonus);
+    if (q < 1) f *= (0.90 + 0.10 * q);
+    var falha = max(0, (1 - q) * 0.6 + (d.desgaste / 100) * 0.4);
+    if (random(1) < falha * clamp(e.rpm / 6000, 0, 1) * 0.05) f *= 0.55;
+    return f;
+};
+
+// dano de detonacao: mesma curva do ECU do jogo, mas calculada aqui dentro
+// (o mod roda fora do evento do player e nao enxerga funcoes locais dele)
+global.mod_dist_dano_mult = function(peca, turbo) {
+    var mult = 0;
+    switch (peca) {
+        case 0: mult = 0.75; break;
+        case 1: mult = 0.5; break;
+        case 2: mult = 0.25; break;
+        case 3: mult = turbo ? 2 : 0.5; break;
+        case 4: mult = turbo ? 3.5 : 0.25; break;
+    }
+    return mult * 0.35;
+};
+
+global.mod_dist_dano = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return;
+    if (global.engine != 1) return;
+    if (car.carburador <= 0) return;
+    var modelo = global.mod_dist_modelo();
+    if (modelo <= 0) return;
+    var d = global.mod_dist_cfg();
+    var e = global.mod_dist_estado;
+    var dt = global.dt;
+    d.desgaste = min(100, d.desgaste + (0.0015 + abs(e.avanco) * 0.00002) * dt);
+    var _iat = global.iat ?? 25;
+    var _ect = global.temp ?? 90;
+    var limite = global.mod_dist_knock_limite(car) - (e.map * 3.5);
+    if (e.map > 0) limite -= (e.map * 2);
+    limite -= max(0, _iat - 25) * 0.15;          // ar quente = menos avanco
+    limite -= max(0, _ect - 95) * 0.20;          // motor quente = menos avanco
+    e.knock = max(0, e.avanco - limite);
+    // dwell grande em baixa rotacao satura a bobina: esquenta e falha
+    if (e.dwell_ms > 8 && e.rpm < 2500) {
+        global.temp += (e.dwell_ms - 8) * 0.01 * dt;
+        if (random(1) < 0.002 * (e.dwell_ms - 8)) d.desgaste = min(100, d.desgaste + 0.2);
+    }
+    if (e.knock > 0 && global.kmh >= 20) {
+        car.vpistao -= e.knock * global.mod_dist_dano_mult(car.pistao, car.turbo) * 0.35 * dt;
+        car.vbielas -= e.knock * global.mod_dist_dano_mult(car.bielas, car.turbo) * 0.30 * dt;
+        global.temp += e.knock * 0.25 * dt;
+    }
+};
+
+global.mod_dist_input = function() {
+    var e = global.mod_dist_estado;
+    var car = global.mod_dist_car();
+    if (keyboard_check_pressed(vk_f6)) { e.menu = (e.menu == 0) ? 1 : 0; e.sel = 0; e.aviso = """"; }
+    if (e.menu == 0) return;
+    if (is_undefined(car)) return;
+    if (keyboard_check_pressed(vk_tab)) {
+        if (e.menu == 1) e.menu = 2;
+        else if (e.menu == 2) e.menu = 3;
+        else e.menu = 1;
+        e.sel = 0;
+        e.aviso = """";
+    }
+    if (e.menu == 2) {
+        if (keyboard_check_pressed(ord(""1""))) global.mod_dist_comprar(1);
+        if (keyboard_check_pressed(ord(""2""))) global.mod_dist_comprar(2);
+        return;
+    }
+    if (e.menu == 3) {
+        var _cc = global.mod_carb_cfg();
+        if (!is_undefined(_cc) && car.carburador > 0) {
+            if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod 3;
+            if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + 2) mod 3;
+            var _d3 = 0;
+            if (keyboard_check_pressed(vk_right)) _d3 = 1;
+            if (keyboard_check_pressed(vk_left)) _d3 = -1;
+            if (_d3 != 0) {
+                switch (e.sel) {
+                    case 0: _cc.lenta = clamp(_cc.lenta + _d3, 20, 60); break;
+                    case 1: _cc.agulha = clamp(_cc.agulha + _d3, 20, 80); break;
+                    case 2: _cc.borboleta = clamp(_cc.borboleta + (_d3 * 5), 0, 100); break;
+                }
+                e.aviso = """";
+            }
+            if (keyboard_check_pressed(vk_f7)) {
+                var _gi7 = global.mod_carb_gicle_ideal(car.carburador);
+                _cc.lenta = round(_gi7 * 0.35);
+                _cc.agulha = round(_gi7 * 0.90);
+                _cc.borboleta = 50;
+                e.aviso = ""carburador no padrao"";
+            }
+        }
+        return;
+    }
+    if (keyboard_check_pressed(ord(""3""))) global.mod_dist_remover();
+    if (keyboard_check_pressed(vk_f7)) { global.mod_dist_padrao_modelo(); e.aviso = ""padrao do modelo""; }
+    var modelo = global.mod_dist_modelo();
+    if (modelo <= 0) return;
+    var d = global.mod_dist_cfg();
+    var lim = global.mod_dist_limites(modelo);
+    var _n = 10;
+    if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod _n;
+    if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + _n - 1) mod _n;
+    var _dir = 0;
+    if (keyboard_check_pressed(vk_right)) _dir = 1;
+    if (keyboard_check_pressed(vk_left)) _dir = -1;
+    if (_dir != 0) {
+        switch (e.sel) {
+            case 0: d.avanco_inicial = clamp(d.avanco_inicial + _dir, lim[0], lim[1]); break;
+            case 1: d.cent_total = clamp(d.cent_total + (_dir * 2), 0, lim[2]); break;
+            case 2: d.rpm_inicio = clamp(d.rpm_inicio + (_dir * 100), 600, 4000); break;
+            case 3: d.rpm_fim = clamp(d.rpm_fim + (_dir * 100), 1200, lim[3]); break;
+            case 4: d.curva = clamp(d.curva + _dir, 0, 2); break;
+            case 5: d.vac_total = clamp(d.vac_total + _dir, 0, lim[4]); break;
+            case 6: d.vac_limiar = clamp(d.vac_limiar + (_dir * 0.1), -0.8, 1); break;
+            case 7: d.dwell = clamp(d.dwell + _dir, lim[5], lim[6]); break;
+            case 8: d.desgaste = clamp(d.desgaste + (_dir * 5), 0, 100); break;
+            case 9: d.ganho = clamp(d.ganho + (_dir * 5), 0, lim[7]); break;
+        }
+        e.aviso = """";
+    }
+};
+
+// roda o modelo com um parametro no valor dado e devolve o bonus resultante
+global.mod_dist_sim = function(_sel, _val) {
+    var d = global.mod_dist_cfg();
+    var _k = [""avanco_inicial"", ""cent_total"", ""rpm_inicio"", ""rpm_fim"", ""curva"", ""vac_total"", ""vac_limiar"", ""dwell"", ""desgaste"", ""ganho""];
+    var _old = variable_struct_get(d, _k[_sel]);
+    variable_struct_set(d, _k[_sel], _val);
+    global.mod_dist_calcular();
+    global.mod_dist_fator();
+    var _b = global.mod_dist_estado.bonus;
+    variable_struct_set(d, _k[_sel], _old);
+    global.mod_dist_calcular();
+    global.mod_dist_fator();
+    return _b;
+};
+
+// tela do carburador: circuitos de lenta, agulha e borboleta
+global.mod_carb_ui = function() {
+    var e = global.mod_dist_estado;
+    var car = global.mod_dist_car();
+    draw_set_font(-1);
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    var _x = 250;
+    var _y = 40;
+    var _w = 780;
+    var _h = 420;
+    draw_set_alpha(0.93);
+    draw_set_color(c_black);
+    draw_rectangle(_x, _y, _x + _w, _y + _h, false);
+    draw_set_alpha(1);
+    draw_set_color(make_color_rgb(60, 130, 90));
+    draw_rectangle(_x, _y, _x + _w, _y + 34, false);
+    draw_set_color(c_white);
+    if (is_undefined(car)) {
+        draw_text(_x + 12, _y + 8, ""CARBURADOR"");
+        draw_text(_x + 20, _y + 60, ""sem carro selecionado"");
+        return;
+    }
+    draw_text(_x + 12, _y + 8, ""CARBURADOR - tipo "" + string(car.carburador));
+    var cfg = global.mod_carb_cfg();
+    if (is_undefined(cfg) || car.carburador <= 0) {
+        draw_set_color(make_color_rgb(255, 170, 120));
+        draw_text(_x + 20, _y + 60, ""Este motor e injetado: nao tem carburador para ajustar."");
+        draw_set_color(c_white);
+        return;
+    }
+    var _labels = [""Gicle de lenta"", ""Agulha (media)"", ""Borboleta""];
+    var _vals = [cfg.lenta, cfg.agulha, cfg.borboleta];
+    for (var i = 0; i < 3; i++) {
+        var _ry = _y + 54 + (i * 30);
+        if (i == e.sel) {
+            draw_set_color(make_color_rgb(50, 70, 60));
+            draw_rectangle(_x + 20, _ry - 2, _x + _w - 20, _ry + 24, false);
+        }
+        draw_set_color(c_white);
+        draw_text(_x + 30, _ry + 4, _labels[i]);
+        draw_set_color(make_color_rgb(255, 210, 120));
+        draw_text(_x + _w - 120, _ry + 4, string(_vals[i]));
+    }
+    var _d1 = [""Mistura em marcha lenta e na saida."",
+               ""Mistura na faixa media (cruzeiro)."",
+               ""Abertura inicial da borboleta.""];
+    var _d2 = [""Baixo = pobre, falha frio. Alto = rico, afoga e suja."",
+               ""Baixo = pobre em media. Alto = rico, perde potencia e gasta."",
+               ""Baixo = lenta baixa. Alto = lenta alta e resposta brusca.""];
+    draw_set_color(make_color_rgb(255, 235, 160));
+    draw_text(_x + 30, _y + 158, _d1[e.sel]);
+    draw_text(_x + 30, _y + 176, _d2[e.sel]);
+    var _gi = global.mod_carb_gicle_ideal(car.carburador);
+    draw_set_color(make_color_rgb(200, 200, 200));
+    draw_text(_x + 30, _y + 214, ""gicle principal ideal deste modelo: "" + string(_gi));
+    draw_set_color(make_color_rgb(170, 200, 255));
+    if (variable_global_exists(""afr"")) {
+        draw_text(_x + 30, _y + 240, ""AFR atual: "" + string(round(global.afr * 10) / 10) + ""   (14.7 = estequeometrico)"");
+    }
+    draw_set_color(make_color_rgb(200, 200, 200));
+    draw_text(_x + 30, _y + _h - 60, ""setas ajustam   F7 padrao   TAB proxima aba   F6 fecha"");
+    draw_set_color(make_color_rgb(120, 255, 140));
+    draw_text(_x + 30, _y + _h - 36, e.aviso);
+    draw_set_color(c_white);
+};
+
+// categoria de compra exclusiva de distribuidores
+global.mod_dist_loja = function() {
+    var e = global.mod_dist_estado;
+    var modelo = global.mod_dist_modelo();
+    draw_set_font(-1);
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    var _x = 250;
+    var _y = 40;
+    var _w = 780;
+    var _h = 400;
+    draw_set_alpha(0.93);
+    draw_set_color(c_black);
+    draw_rectangle(_x, _y, _x + _w, _y + _h, false);
+    draw_set_alpha(1);
+    draw_set_color(make_color_rgb(200, 60, 60));
+    draw_rectangle(_x, _y, _x + _w, _y + 34, false);
+    draw_set_color(c_white);
+    draw_text(_x + 12, _y + 8, ""LOJA - DISTRIBUIDORES"");
+    draw_set_halign(fa_right);
+    draw_text(_x + _w - 12, _y + 8, ""dinheiro: $"" + string(global.cash));
+    draw_set_halign(fa_left);
+    global.mod_dist_draw_icon(_x + 150, _y + 210, 300);
+    for (var i = 0; i < 2; i++) {
+        var _m = i + 1;
+        var _ry = _y + 56 + (i * 112);
+        var _inst = (modelo == _m);
+        draw_set_color(_inst ? make_color_rgb(45, 80, 55) : make_color_rgb(32, 32, 40));
+        draw_rectangle(_x + 300, _ry, _x + _w - 20, _ry + 98, false);
+        draw_set_color(c_white);
+        draw_text(_x + 312, _ry + 8, ""["" + string(_m) + ""]  "" + global.mod_dist_nome[_m]);
+        var _p = global.mod_dist_preco[_m];
+        draw_text(_x + 312, _ry + 28, (_p <= 0) ? ""incluso de fabrica"" : ""$"" + string(_p));
+        var _lim = global.mod_dist_limites(_m);
+        draw_set_color(make_color_rgb(180, 190, 210));
+        draw_text(_x + 312, _ry + 50, ""avanco ate "" + string(_lim[1]) + ""   centrifugo "" + string(_lim[2]) + ""   ate "" + string(_lim[3]) + "" rpm"");
+        draw_text(_x + 312, _ry + 68, ""vacuo ate "" + string(_lim[4]) + ""   dwell "" + string(_lim[5]) + ""-"" + string(_lim[6]) + ""   ganho ate "" + string(_lim[7]) + ""%"");
+        if (_inst) {
+            draw_set_color(make_color_rgb(120, 255, 140));
+            draw_text(_x + _w - 140, _ry + 8, ""INSTALADO"");
+        }
+    }
+    draw_set_color(make_color_rgb(200, 200, 200));
+    draw_text(_x + 300, _y + _h - 62, ""[1] original   [2] competicao   TAB ajustar   F6 fechar"");
+    draw_set_color(make_color_rgb(120, 255, 140));
+    draw_text(_x + 300, _y + _h - 40, e.aviso);
+    draw_set_color(c_white);
+};
+
+// motor carburado = unico que aceita distribuidor
+global.mod_dist_pode = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return false;
+    if (!variable_struct_exists(car, ""carburador"")) return false;
+    return (car.carburador > 0);
+};
+
+// ---- carburador: circuitos de lenta, agulha e borboleta ----
+global.mod_carb_gicle_ideal = function(_carb) {
+    switch (_carb) {
+        case 1: return 38;
+        case 2: return 42;
+        case 3: return 46;
+        case 4: return 48;
+        case 5: return 50;
+        case 6: return 53;
+        case 7: return 56;
+        case 8: return 60;
+    }
+    return 50;
+};
+
+// configuracao propria do carro; padrao = gicle ideal do modelo (neutro)
+global.mod_carb_cfg = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return undefined;
+    if (!variable_struct_exists(car, ""carb_cfg"") || is_undefined(car.carb_cfg)) {
+        var _gi = global.mod_carb_gicle_ideal(car.carburador);
+        car.carb_cfg = {
+            lenta: round(_gi * 0.35),
+            agulha: round(_gi * 0.90),
+            borboleta: 50
+        };
+    }
+    return car.carb_cfg;
+};
+
+// desvio equivalente em pontos de gicle, somado ao desvio do gicle principal
+global.mod_carb_desvio = function(_rpm_ratio, _cfg, _gicle_ideal) {
+    if (is_undefined(_cfg)) return 0;
+    var _il = round(_gicle_ideal * 0.35);
+    var _ia = round(_gicle_ideal * 0.90);
+    // janelas separadas: lenta domina abaixo de 0.08, agulha no meio, borboleta na saida
+    var _w_l = 1 - clamp((_rpm_ratio - 0.08) / 0.12, 0, 1);
+    var _w_a = clamp(1 - abs(_rpm_ratio - 0.45) / 0.30, 0, 1);
+    var _w_b = 1 - clamp(_rpm_ratio / 0.12, 0, 1);
+    var _d = 0;
+    _d += (_cfg.lenta - _il) * _w_l * 0.80;
+    _d += (_cfg.agulha - _ia) * _w_a * 0.60;
+    _d += (_cfg.borboleta - 50) * _w_b * 0.40;
+    return _d;
+};
+
+// sprite do distribuidor: caminho relativo no GMS resolve para a pasta de SAVE,
+// por isso tentamos working_directory (pasta do jogo) antes do relativo.
+global.mod_dist_spr = function() {
+    var e = global.mod_dist_estado;
+    if (e.spr >= 0) return e.spr;
+    if (e.spr_try == 0) {
+        e.spr_try = 1;
+        var _p = working_directory + ""assets/Mod_assets/distribuidor.png"";
+        if (file_exists(_p)) e.spr = sprite_add(_p, 1, false, false, 0, 0);
+        if (e.spr < 0) {
+            _p = ""assets/Mod_assets/distribuidor.png"";
+            if (file_exists(_p)) e.spr = sprite_add(_p, 1, false, false, 0, 0);
+        }
+        if (e.spr < 0) {
+            _p = ""Mod_assets/distribuidor.png"";
+            if (file_exists(_p)) e.spr = sprite_add(_p, 1, false, false, 0, 0);
+        }
+    }
+    return e.spr;
+};
+
+// icone quadrado (256x256) recortado da ilustracao
+global.mod_dist_icon = function() {
+    var e = global.mod_dist_estado;
+    if (e.icon >= 0) return e.icon;
+    if (e.icon_try == 0) {
+        e.icon_try = 1;
+        // este runner so resolve arquivos na raiz da pasta de save
+        // (subpasta e caminho absoluto retornam -1)
+        if (file_exists(""distribuidor_icon.png"")) e.icon = sprite_add(""distribuidor_icon.png"", 1, false, false, 0, 0);
+        if (e.icon < 0 && file_exists(""distribuidor.png"")) e.icon = sprite_add(""distribuidor.png"", 1, false, false, 0, 0);
+    }
+    return e.icon;
+};
+
+// desenha centralizado em (_cx,_cy) com altura _h em pixels. Nunca passa sprite -1:
+// se nenhuma arte carregar, cai no icone do carburador.
+global.mod_dist_draw_icon = function(_cx, _cy, _h) {
+    var _sp = global.mod_dist_icon();
+    if (_sp < 0) _sp = global.mod_dist_spr();
+    var _sw = 0;
+    var _sh = 0;
+    if (_sp >= 0) {
+        _sw = sprite_get_width(_sp);
+        _sh = sprite_get_height(_sp);
+    }
+    if (_sw > 0 && _sh > 0) {
+        var _sc = _h / _sh;
+        draw_sprite_ext(_sp, 0, _cx - (_sw * _sc) / 2, _cy - _h / 2, _sc, _sc, 0, c_white, 1);
+    } else {
+        // sem arte: marcador alinhado, sem sprite deslocado
+        draw_set_color(make_color_rgb(70, 70, 90));
+        draw_roundrect(_cx - (_h * 0.42), _cy - (_h * 0.42), _cx + (_h * 0.42), _cy + (_h * 0.42), false);
+        draw_set_color(c_white);
+        draw_set_halign(fa_center);
+        draw_set_valign(fa_middle);
+        draw_text(_cx, _cy, ""DIST"");
+        draw_set_halign(fa_left);
+        draw_set_valign(fa_top);
+    }
+};
+
+// registra os dois itens na base do inventario (idempotente)
+global.mod_dist_db = function() {
+    if (!variable_global_exists(""item_db"")) return;
+    if (!is_struct(global.item_db)) return;
+    if (variable_struct_exists(global.item_db, ""distribuidor_original"")) return;
+    variable_struct_set(global.item_db, ""distribuidor_original"", {
+        id: ""distribuidor_original"", name: ""Distribuidor Original"", category: ""peca_externa"",
+        value_label: ""Original"", value_default: 1, sprite_name: ""spr_venture_externa"", image_index: 17,
+        campo: ""distribuidor"", vcampo: """", campo_val: 1
+    });
+    variable_struct_set(global.item_db, ""distribuidor_competicao"", {
+        id: ""distribuidor_competicao"", name: ""Distribuidor Competicao"", category: ""peca_externa"",
+        value_label: ""Competicao"", value_default: 2, sprite_name: ""spr_venture_externa"", image_index: 17,
+        campo: ""distribuidor"", vcampo: """", campo_val: 2
+    });
+};
+
+global.mod_dist_ui = function() {
+    var e = global.mod_dist_estado;
+    global.mod_dist_db();
+    global.mod_dist_ativo = (global.mod_dist_modelo() > 0) ? 1 : 0;
+    if (!global.mod_dist_pode()) { e.menu = 0; return; }
+    global.mod_dist_input();
+    if (e.menu == 0 && !global.mod_dist_ativo) return;
+    if (variable_global_exists(""mod_dist_debug"") && global.mod_dist_debug == 1) {
+        var _f = file_text_open_write(""mod_diag.txt"");
+        file_text_write_string(_f, ""room="" + string(room) + "" player="" + string(instance_exists(obj_player)));
+        file_text_write_string(_f, "" carros="" + string(array_length(global.car_data)) + "" cash="" + string(global.cash));
+        file_text_write_string(_f, "" modelo="" + string(global.mod_dist_modelo()) + "" menu="" + string(e.menu) + "" ativo="" + string(global.mod_dist_ativo));
+        file_text_write_string(_f, "" avanco="" + string(global.mod_dist_calcular()) + "" fator="" + string(global.mod_dist_fator()));
+        file_text_close(_f);
+    }
+    var modelo = global.mod_dist_modelo();
+    var car = global.mod_dist_car();
+    draw_set_font(-1);
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    if (e.menu == 0) {
+        if (modelo <= 0) return;
+        draw_set_alpha(0.55);
+        draw_set_color(c_black);
+        draw_rectangle(8, 8, 360, 46, false);
+        draw_set_alpha(1);
+        draw_set_color(c_white);
+        draw_text(14, 12, global.mod_dist_nome[modelo] + ""  "" + string(round(e.avanco)) + "" graus"");
+        draw_set_color(make_color_rgb(170, 200, 255));
+        draw_text(14, 27, ""cent "" + string(round(e.cent)) + ""  vac "" + string(round(e.vac)) + ""  dwell "" + string(round(e.dwell_ef)) + ""  F6 menu"");
+        draw_set_color(c_white);
+        return;
+    }
+    if (e.menu == 2) { global.mod_dist_loja(); return; }
+    if (e.menu == 3) { global.mod_carb_ui(); return; }
+    var _x = 250;
+    var _y = 40;
+    var _w = 780;
+    var _h = 620;
+    draw_set_alpha(0.9);
+    draw_set_color(c_black);
+    draw_rectangle(_x, _y, _x + _w, _y + _h, false);
+    draw_set_alpha(1);
+    draw_set_color(make_color_rgb(200, 60, 60));
+    draw_rectangle(_x, _y, _x + _w, _y + 34, false);
+    draw_set_color(c_white);
+    draw_text(_x + 12, _y + 8, ""DISTRIBUIDOR - "" + global.mod_dist_nome[modelo]);
+    global.mod_dist_draw_icon(_x + 150, _y + 200, 300);
+    if (modelo <= 0) {
+        draw_set_color(make_color_rgb(255, 170, 120));
+        draw_text(_x + 310, _y + 60, ""Este motor e injetado: distribuidor so serve em carburador."");
+        draw_set_color(c_white);
+        return;
+    }
+    var d = global.mod_dist_cfg();
+    var lim = global.mod_dist_limites(modelo);
+    var _labels = [""Avanco inicial (graus)"", ""Centrifugo total (graus)"", ""RPM de inicio"", ""RPM de fim"", ""Curva (0 linear, 1 progressiva, 2 rapida)"", ""Vacuo total (graus)"", ""Limiar de vacuo (bar)"", ""Dwell (graus)"", ""Desgaste (%)"", ""Ganho (%)""];
+    var _vals = [d.avanco_inicial, d.cent_total, d.rpm_inicio, d.rpm_fim, d.curva, d.vac_total, d.vac_limiar, d.dwell, d.desgaste, d.ganho];
+    var _i;
+    for (_i = 0; _i < 10; _i++) {
+        var _ry = _y + 50 + (_i * 30);
+        if (_i == e.sel) {
+            draw_set_color(make_color_rgb(60, 60, 90));
+            draw_rectangle(_x + 300, _ry - 2, _x + _w - 14, _ry + 24, false);
+        }
+        draw_set_color(c_white);
+        draw_text(_x + 310, _ry + 4, _labels[_i]);
+        draw_set_color(make_color_rgb(255, 210, 120));
+        draw_text(_x + _w - 120, _ry + 4, string(_vals[_i]));
+    }
+    // explicacao do parametro selecionado + efeito real de min/atual/max
+    var _d1 = [""Avanco inicial: ponto base da ignicao."",
+               ""Centrifugo total: avanco extra que sobe com o giro."",
+               ""RPM de inicio: giro onde a curva comeca a entrar."",
+               ""RPM de fim: giro onde o avanco satura."",
+               ""Curva: formato da entrada das duas molas."",
+               ""Vacuo total: avanco extra em carga leve."",
+               ""Limiar de vacuo: MAP onde o vacuo comeca."",
+               ""Dwell: tempo de carga da bobina."",
+               ""Desgaste do platinado e do rotor."",
+               ""Ganho: quanto do teto do modelo o carro usa.""];
+    var _d2 = [""Baixo = fraco e lento. Alto = torque, mas detona."",
+               ""Baixo = morre em alta. Alto = potencia, risco de knock."",
+               ""Baixo = antecipa cedo. Alto = amarrado ate subir."",
+               ""Baixo = trava cedo e perde alta. Alto = estica a curva."",
+               ""0 linear, 1 progressiva, 2 rapida (mola leve)."",
+               ""Baixo = consumo pior. Alto = economia, mas detona."",
+               ""Baixo = entra cedo. Alto = so em vacuo forte."",
+               ""Baixo = faisca fraca. Alto = forte, bobina esquenta."",
+               ""Alto = faisca irregular e perda de potencia."",
+               ""Baixo = pouco proveito. Alto = 100% do potencial.""];
+    var _pmin = [lim[0], 0, 600, 1200, 0, 0, -0.8, lim[5], 0, 0];
+    var _pmax = [lim[1], lim[2], 4000, lim[3], 2, lim[4], 1, lim[6], 100, lim[7]];
+    var _bmin = global.mod_dist_sim(e.sel, _pmin[e.sel]);
+    var _bmax = global.mod_dist_sim(e.sel, _pmax[e.sel]);
+    draw_set_color(make_color_rgb(255, 235, 160));
+    draw_text(_x + 310, _y + 352, _d1[e.sel]);
+    draw_text(_x + 310, _y + 368, _d2[e.sel]);
+    draw_set_color(make_color_rgb(255, 150, 150));
+    draw_text(_x + 310, _y + 394, ""min "" + string(round(_bmin * 100)) + ""%"");
+    draw_set_color(c_white);
+    draw_text(_x + 380, _y + 394, ""atual "" + string(round(e.bonus * 100)) + ""%"");
+    draw_set_color(make_color_rgb(120, 255, 140));
+    draw_text(_x + 480, _y + 394, ""max "" + string(round(_bmax * 100)) + ""%"");
+    draw_set_color(make_color_rgb(200, 200, 200));
+    draw_text(_x + 310, _y + 412, ""(bonus de potencia do motor neste giro/carga)"");
+    draw_set_color(make_color_rgb(170, 200, 255));
+    draw_text(_x + 310, _y + _h - 110, ""avanco "" + string(round(e.avanco)) + "" (ideal "" + string(round(e.ideal)) + "")  limite knock "" + string(round(global.mod_dist_knock_limite(car))) + ""  knock "" + string(round(e.knock)));
+    draw_text(_x + 310, _y + _h - 92, ""bonus "" + string(round(e.bonus * 100)) + ""%   faisca "" + string(round(e.q * 100)) + ""% ("" + string(round(e.dwell_ms * 10) / 10) + ""ms)   dinheiro $"" + string(global.cash));
+    draw_set_color(make_color_rgb(200, 200, 200));
+    draw_text(_x + 310, _y + _h - 70, ""setas ajustam (limite do modelo)   TAB loja   F7 padrao   [3] voltar ao original"");
+    draw_set_color(make_color_rgb(120, 255, 140));
+    draw_text(_x + 310, _y + _h - 50, e.aviso);
+    draw_set_color(c_white);
+};
+
+global.mod_dist_carregar = function() {
+    // o ini define os PADROES de uma compra nova; cada carro guarda a sua config
+    if (file_exists(""mod_distribuidor.ini"")) {
+        ini_open(""mod_distribuidor.ini"");
+        global.mod_dist_def.avanco_inicial = ini_read_real(""distribuidor"", ""avanco_inicial"", global.mod_dist_def.avanco_inicial);
+        global.mod_dist_def.cent_total = ini_read_real(""distribuidor"", ""cent_total"", global.mod_dist_def.cent_total);
+        global.mod_dist_def.rpm_inicio = ini_read_real(""distribuidor"", ""rpm_inicio"", global.mod_dist_def.rpm_inicio);
+        global.mod_dist_def.rpm_fim = ini_read_real(""distribuidor"", ""rpm_fim"", global.mod_dist_def.rpm_fim);
+        global.mod_dist_def.curva = ini_read_real(""distribuidor"", ""curva"", global.mod_dist_def.curva);
+        global.mod_dist_def.vac_total = ini_read_real(""distribuidor"", ""vac_total"", global.mod_dist_def.vac_total);
+        global.mod_dist_def.vac_limiar = ini_read_real(""distribuidor"", ""vac_limiar"", global.mod_dist_def.vac_limiar);
+        global.mod_dist_def.dwell = ini_read_real(""distribuidor"", ""dwell"", global.mod_dist_def.dwell);
+        global.mod_dist_def.ganho = ini_read_real(""distribuidor"", ""ganho"", global.mod_dist_def.ganho);
+        ini_close();
+    }
+    global.mod_dist_ativo = (global.mod_dist_modelo() > 0) ? 1 : 0;
+};
+");
+
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "var _base_acceleration = (global.torque * global.hp) / (global.weight * 750);",
+    "if (global.mod_dist_ativo) { global.torque *= global.mod_dist_fator(); global.ignicao = global.mod_dist_estado.avanco; } var _base_acceleration = (global.torque * global.hp) / (global.weight * 750);",
+    false);
+
+g.QueueAppend("gml_Object_obj_player_Step_0", @"
+if (global.mod_dist_ativo) {
+    global.mod_dist_dano();
+}
+");
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "var _gicle2 = global.car_data[global.vehicles_array].gicle_2nd;",
+    "var _gicle2 = global.car_data[global.vehicles_array].gicle_2nd; var _mcarb = global.mod_carb_cfg();",
+    false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "var _gicle_desvio = _gicle_ativo - _gicle_ideal;",
+    "var _gicle_desvio = _gicle_ativo - _gicle_ideal + global.mod_carb_desvio(_rpm_ratio, _mcarb, _gicle_ideal);",
+    false);
+
+g.QueueAppend("gml_Object_obj_noguiin_Draw_64", @"
+// desenha so no Draw GUI: fica acima do passe CRT, sem piscar
+global.mod_dist_ui();
+");
+
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"        default:
+            return [];
+    }
+}
+
+function GetPressureTurbo(arg0)",
+    @"        case 18:
+            return (global.idioma == 0) ? [""Original"", ""Competicao""] : [""Original"", ""Competition""];
+        default:
+            return [];
+    }
+}
+
+function GetPressureTurbo(arg0)",
+    false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"                return @@array_get@@([""シングルボディ 2E"", ""シングルボディ 3E"", ""デュアルボディ VFD 446"", ""デュアルボディ Vever h34"", ""デュアルボディ Vever 40"", ""デュアルボディ Vever 44"", ""デュアルボディ Vever 48"", ""デュアルボディ Vever 55""], arg1);
+            }
+            break;
+        default:",
+    @"                return @@array_get@@([""シングルボディ 2E"", ""シングルボディ 3E"", ""デュアルボディ VFD 446"", ""デュアルボディ Vever h34"", ""デュアルボディ Vever 40"", ""デュアルボディ Vever 44"", ""デュアルボディ Vever 48"", ""デュアルボディ Vever 55""], arg1);
+            }
+            break;
+        case 18:
+            if (idioma == 0)
+            {
+                return @@array_get@@([""Distribuidor Original"", ""Distribuidor Competicao""], arg1);
+            }
+            return @@array_get@@([""Original Distributor"", ""Competition Distributor""], arg1);
+            break;
+        default:",
+    false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"            return @@array_get@@([600, 1500, 950, 1300, 2600, 3200, 6600, 9600, 9600], arg1);",
+    @"            return @@array_get@@([600, 1500, 950, 1300, 2600, 3200, 6600, 9600, 9600], arg1);
+        case 18:
+            return @@array_get@@([800, 12000], arg1);",
+    false);
+g.QueueFindReplace("gml_GlobalScript_GetNameParts",
+    @"        case 17:
+            return ""carburador"";
+        default:
+            return ""parte_invalida"";",
+    @"        case 17:
+            return ""carburador"";
+        case 18:
+            return ""distribuidor"";
+        default:
+            return ""parte_invalida"";",
+    false);
+g.QueueFindReplace("gml_GlobalScript_Delivery",
+    @"                case 7:
+                    return ""carburador_8"";
+            }
+    }
+    return """";",
+    @"                case 7:
+                    return ""carburador_8"";
+            }
+        case 18:
+            switch (arg1)
+            {
+                case 0:
+                    return ""distribuidor_original"";
+                case 1:
+                    return ""distribuidor_competicao"";
+            }
+    }
+    return """";",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"        var content_height_ext2 = 1120;",
+    @"        var content_height_ext2 = 1260;",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"[win_x + 400, win_y + 820 + _venture_y]];",
+    @"[win_x + 400, win_y + 820 + _venture_y], [win_x + 40, win_y + 950 + _venture_y]];",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"[win_x + 480, win_y + 978 + _venture_y]];",
+    @"[win_x + 480, win_y + 978 + _venture_y], [win_x + 120, win_y + 1133 + _venture_y]];",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"                if (i == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, i, sx, sy, scale, scale, 0, -1, 1);
+                }",
+    @"                if (i == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, i, sx, sy, scale, scale, 0, -1, 1);
+                }
+                else if (i == 18)
+                {
+                    global.mod_dist_draw_icon(sx, sy + 10, 96);
+                }",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"                            else
+                            {
+                                label_ext = ""キャブレター"";
+                            }
+                            break;
+                    }",
+    @"                            else
+                            {
+                                label_ext = ""キャブレター"";
+                            }
+                            break;
+                        case 18:
+                            label_ext = ""DISTRIBUIDOR"";
+                            break;
+                    }",
+    false);
+g.QueueFindReplace("gml_Object_obj_pc_window_Draw_0",
+    @"                if (global.venture_pecas == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, 0, sx, sy, scale, scale, 0, -1, 1);
+                }",
+    @"                if (global.venture_pecas == 18)
+                {
+                    global.mod_dist_draw_icon(sx, sy + 10, 96);
+                }
+                else if (global.venture_pecas == 15)
+                {
+                    draw_sprite_ext(spr_venture_wb, 0, sx, sy, scale, scale, 0, -1, 1);
+                }",
+    false);
+g.QueueFindReplace("gml_GlobalScript_Inventory",
+    @"    variable_struct_set(@@array_get@@(global.car_data, idx), campo, _inventory_campo_value(arg1.item_id, campo));",
+    @"    var _pv_inst = variable_struct_exists(data, ""campo_val"") ? data.campo_val : _inventory_campo_value(arg1.item_id, campo);
+    variable_struct_set(@@array_get@@(global.car_data, idx), campo, _pv_inst);",
+    false);
+
+g.Import();
+ScriptMessage("MARK distribuidor=v2 instalado");
+"#;
+
+/// CSX somente-leitura que confere o mod.
+const MOD_CHECK_CSX: &str = r#"using System;
+using UndertaleModLib;
+using UndertaleModLib.Decompiler;
+
+EnsureDataLoaded();
+var ctx = new GlobalDecompileContext(Data);
+var st = Data.ToolInfo.DecompilerSettings;
+string s1 = "", s2 = "", s3 = "";
+try { s1 = GetDecompiledText(Data.Code.ByName("gml_RoomCC_Start_0_Create"), ctx, st); } catch { s1 = "ERR"; }
+try { s2 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_player_Step_0"), ctx, st); } catch { s2 = "ERR"; }
+try { s3 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_noguiin_Draw_64"), ctx, st); } catch { s3 = "ERR"; }
+string s4 = "", s5 = "", s6 = "", s7 = "";
+try { s4 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_pc_window_Draw_0"), ctx, st); } catch { s4 = "ERR"; }
+try { s5 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_GetNameParts"), ctx, st); } catch { s5 = "ERR"; }
+try { s6 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Delivery"), ctx, st); } catch { s6 = "ERR"; }
+try { s7 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Inventory"), ctx, st); } catch { s7 = "ERR"; }
+ScriptMessage($"MARK versao={(s1.Contains("_vac_inhg") ? "v2.1-fisica" : "antiga")}");
+ScriptMessage($"MARK item={(s1.Contains("mod_dist_comprar") ? "ok" : "ausente")}");
+ScriptMessage($"MARK limites={(s1.Contains("mod_dist_limites") ? "ok" : "ausente")}");
+ScriptMessage($"MARK dano={(s1.Contains("mod_dist_dano_mult") && s2.Contains("mod_dist_dano") ? "ok" : "ausente")}");
+ScriptMessage($"MARK potencia={(s2.Contains("mod_dist_fator") ? "ok" : "ausente")}");
+ScriptMessage($"MARK ui={(s3.Contains("mod_dist_ui") ? "ok" : "ausente")}");
+ScriptMessage($"MARK loja={(s1.Contains("mod_dist_loja") && s1.Contains("mod_dist_db") ? "ok" : "ausente")}");
+ScriptMessage($"MARK shop_tile={(s4.Contains("win_y + 950 + _venture_y") && s4.Contains("DISTRIBUIDOR") ? "ok" : "ausente")}");
+ScriptMessage($"MARK shop_preco={(s5.Contains("[800, 12000]") ? "ok" : "ausente")}");
+ScriptMessage($"MARK shop_entrega={(s6.Contains("distribuidor_competicao") ? "ok" : "ausente")}");
+ScriptMessage($"MARK shop_instala={(s7.Contains("_pv_inst") ? "ok" : "ausente")}");
+ScriptMessage($"MARK carb={(s1.Contains("mod_carb_desvio") && s1.Contains("mod_carb_cfg") ? "ok" : "ausente")}");
+ScriptMessage($"MARK carb_hook={(s2.Contains("mod_carb_desvio") && s2.Contains("_mcarb") ? "ok" : "ausente")}");
+ScriptMessage($"MARK torque={(s2.Contains("global.torque *= global.mod_dist_fator()") && s2.Contains("global.ignicao = global.mod_dist_estado.avanco") ? "ok" : "ausente")}");
+"#;
+
 fn run_utmt(script: &str, input: &Path, output: Option<&Path>) -> Result<String, String> {
     let dir = utmt_dir().ok_or_else(|| {
         "UndertaleModCli nao encontrado (instale em ~/.local/share/mcml-fixer/utmt ou defina MCML_UTMT)".to_string()
@@ -717,6 +1637,220 @@ fn launch(game_dir: &Path, out_w: u32, out_h: u32, use_gamescope: bool) -> Resul
     Ok(child.id())
 }
 
+
+// ============================ MOD DISTRIBUIDOR ============================
+// Instalador do mod de distribuidor, integrado como aba. Aplica um CSX que
+// adiciona ignicao mecanica aos motores carburados (o jogo so tem modelo de
+// ignicao para carros com ECU). O backup e' separado do backup do --data-fix.
+
+const MOD_BACKUP: &str = "assets/game.unx.bak-mod-distribuidor";
+const MOD_MARKER: &str = "assets/.mcml-mod-distribuidor";
+
+/// Configuracao do distribuidor (chaves da secao [distribuidor] do ini).
+#[derive(Clone)]
+struct ModOpts {
+    ativo: i32,
+    avanco_inicial: i32,
+    cent_total: i32,
+    rpm_inicio: i32,
+    rpm_fim: i32,
+    curva: i32,
+    vac_total: i32,
+    vac_limiar: f32,
+    dwell: i32,
+    desgaste: i32,
+    ganho: i32,
+}
+
+impl Default for ModOpts {
+    fn default() -> Self {
+        ModOpts {
+            ativo: 1, avanco_inicial: 10, cent_total: 22, rpm_inicio: 1000, rpm_fim: 3200,
+            curva: 1, vac_total: 12, vac_limiar: 0.0, dwell: 45, desgaste: 0, ganho: 100,
+        }
+    }
+}
+
+impl ModOpts {
+    fn to_ini(&self) -> String {
+        format!(
+            "[distribuidor]\nativo={}\navanco_inicial={}\ncent_total={}\nrpm_inicio={}\nrpm_fim={}\ncurva={}\nvac_total={}\nvac_limiar={}\ndwell={}\ndesgaste={}\nganho={}\n",
+            self.ativo, self.avanco_inicial, self.cent_total, self.rpm_inicio, self.rpm_fim,
+            self.curva, self.vac_total, self.vac_limiar, self.dwell, self.desgaste, self.ganho
+        )
+    }
+
+    fn set(&mut self, k: &str, v: &str) -> bool {
+        let f = v.parse::<f32>().ok();
+        match k {
+            "ativo" => self.ativo = f.map(|x| x as i32).unwrap_or(self.ativo),
+            "avanco_inicial" => self.avanco_inicial = f.map(|x| x as i32).unwrap_or(self.avanco_inicial),
+            "cent_total" => self.cent_total = f.map(|x| x as i32).unwrap_or(self.cent_total),
+            "rpm_inicio" => self.rpm_inicio = f.map(|x| x as i32).unwrap_or(self.rpm_inicio),
+            "rpm_fim" => self.rpm_fim = f.map(|x| x as i32).unwrap_or(self.rpm_fim),
+            "curva" => self.curva = f.map(|x| x as i32).unwrap_or(self.curva),
+            "vac_total" => self.vac_total = f.map(|x| x as i32).unwrap_or(self.vac_total),
+            "vac_limiar" => self.vac_limiar = f.unwrap_or(self.vac_limiar),
+            "dwell" => self.dwell = f.map(|x| x as i32).unwrap_or(self.dwell),
+            "desgaste" => self.desgaste = f.map(|x| x as i32).unwrap_or(self.desgaste),
+            "ganho" => self.ganho = f.map(|x| x as i32).unwrap_or(self.ganho),
+            _ => return false,
+        }
+        true
+    }
+}
+
+fn mod_ini_path() -> PathBuf {
+    home().join(".config/My_Car_My_Life/mod_distribuidor.ini")
+}
+
+fn mod_write_ini(o: &ModOpts) -> Result<PathBuf, String> {
+    let p = mod_ini_path();
+    if let Some(d) = p.parent() {
+        fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    let mut f = fs::File::create(&p).map_err(|e| e.to_string())?;
+    f.write_all(o.to_ini().as_bytes()).map_err(|e| e.to_string())?;
+    Ok(p)
+}
+
+/// Grava o GEN8 sem criar backup (usado no arquivo temporario do UTMT).
+fn gen8_set_raw(data: &Path, w: u32, h: u32) -> Result<(), String> {
+    let mut b = fs::read(data).map_err(|e| e.to_string())?;
+    if b.len() < 0x54 || &b[0..4] != b"FORM" || &b[8..12] != b"GEN8" {
+        return Err("layout inesperado".into());
+    }
+    b[0x4c..0x50].copy_from_slice(&w.to_le_bytes());
+    b[0x50..0x54].copy_from_slice(&h.to_le_bytes());
+    fs::write(data, &b).map_err(|e| e.to_string())
+}
+
+/// Estado do mod pelo marcador (rapido).
+fn mod_state(game_dir: &Path) -> Option<String> {
+    fs::read_to_string(game_dir.join(MOD_MARKER)).ok().map(|s| s.trim().replace('\n', " "))
+}
+
+/// Instala o mod: backup -> UTMT (GEN8 temporario) -> GEN8 de volta -> ini.
+fn mod_install(game_dir: &Path, o: &ModOpts, log: &mut Vec<String>) {
+    let assets = game_dir.join("assets");
+    let cur = assets.join("game.unx");
+    if !cur.is_file() {
+        log.push("MOD: assets/game.unx nao existe.".into());
+        return;
+    }
+    if utmt_dir().is_none() {
+        log.push("MOD: UndertaleModCli ausente.".into());
+        return;
+    }
+    if mod_state(game_dir).is_some() {
+        log.push("MOD: ja instalado. Use --mod-uninstall antes de reinstalar.".into());
+        return;
+    }
+    let bkp = game_dir.join(MOD_BACKUP);
+    if !bkp.is_file() {
+        match fs::copy(&cur, &bkp) {
+            Ok(_) => log.push(format!("MOD backup: {}", bkp.display())),
+            Err(e) => { log.push(format!("MOD ERRO backup: {}", e)); return; }
+        }
+    } else {
+        log.push("MOD: backup ja existe (mantido)".into());
+    }
+    let gen8 = read_gen8(&cur).unwrap_or((1280, 1024));
+    let tin = assets.join("game.unx.modtmp");
+    let tout = assets.join("game.unx.modout");
+    if fs::copy(&cur, &tin).is_err() {
+        log.push("MOD ERRO: nao consegui copiar o game.unx.".into());
+        return;
+    }
+    if let Err(e) = gen8_set_raw(&tin, 1280, 720) {
+        log.push(format!("MOD ERRO preparando temporario: {}", e));
+        return;
+    }
+    log.push("MOD: aplicando no game.unx (UTMT, ~1 min)...".into());
+    match run_utmt(MOD_PATCH_CSX, &tin, Some(&tout)) {
+        Ok(out) => {
+            for l in out.lines().filter(|l| l.trim_start().starts_with("MARK")) {
+                log.push(format!("  {}", l.trim()));
+            }
+            match fs::copy(&tout, &cur) {
+                Ok(_) => {
+                    let _ = fs::remove_file(&tin);
+                    let _ = fs::remove_file(&tout);
+                    match gen8_set_raw(&cur, gen8.0, gen8.1) {
+                        Ok(_) => log.push(format!("MOD: GEN8 restaurado {}x{}", gen8.0, gen8.1)),
+                        Err(e) => log.push(format!("MOD AVISO GEN8: {}", e)),
+                    }
+                    match mod_write_ini(o) {
+                        Ok(p) => log.push(format!("MOD config: {}", p.display())),
+                        Err(e) => log.push(format!("MOD AVISO config: {}", e)),
+                    }
+                    // copia a arte para a pasta de save: no GMS o caminho relativo
+                    // de sprite_add resolve ali, nao na pasta do jogo
+                    // a raiz do save: o runner nao enxerga subpastas nem caminhos absolutos
+                    let dst_dir = home().join(".config/My_Car_My_Life");
+                    for nome in ["distribuidor.png", "distribuidor_icon.png"] {
+                        let src_png = game_dir.join("assets/Mod_assets").join(nome);
+                        if src_png.is_file() {
+                            match fs::copy(&src_png, dst_dir.join(nome)) {
+                                Ok(_) => log.push(format!("MOD arte: {}", dst_dir.join(nome).display())),
+                                Err(e) => log.push(format!("MOD AVISO arte {}: {}", nome, e)),
+                            }
+                        } else {
+                            log.push(format!("MOD AVISO: assets/Mod_assets/{} nao encontrado", nome));
+                        }
+                    }
+                    let _ = fs::write(game_dir.join(MOD_MARKER), o.to_ini());
+                    log.push("MOD instalado. No carro carburado, F6 abre o menu.".into());
+                }
+                Err(e) => log.push(format!("MOD ERRO instalando: {}", e)),
+            }
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tin);
+            log.push(format!("MOD ERRO: {}", e));
+        }
+    }
+}
+
+fn mod_uninstall(game_dir: &Path, log: &mut Vec<String>) {
+    let cur = game_dir.join("assets/game.unx");
+    let bkp = game_dir.join(MOD_BACKUP);
+    if !bkp.is_file() {
+        log.push("MOD: nenhum backup do mod encontrado.".into());
+        return;
+    }
+    match fs::copy(&bkp, &cur) {
+        Ok(_) => {
+            let _ = fs::remove_file(game_dir.join(MOD_MARKER));
+            log.push("MOD removido (game.unx restaurado do backup).".into());
+        }
+        Err(e) => log.push(format!("MOD ERRO restaurando: {}", e)),
+    }
+}
+
+fn mod_check(game_dir: &Path, log: &mut Vec<String>) {
+    if utmt_dir().is_none() {
+        log.push("MOD: UndertaleModCli ausente.".into());
+        return;
+    }
+    let tmp = std::env::temp_dir().join("mcml_mod_check.unx");
+    if fs::copy(game_dir.join("assets/game.unx"), &tmp).is_err() {
+        log.push("MOD ERRO: nao consegui copiar o game.unx.".into());
+        return;
+    }
+    let _ = gen8_set_raw(&tmp, 1280, 720);
+    log.push("MOD: verificando game.unx (UTMT, ~1 min)...".into());
+    match run_utmt(MOD_CHECK_CSX, &tmp, None) {
+        Ok(out) => {
+            for l in out.lines().filter(|l| l.trim_start().starts_with("MARK")) {
+                log.push(format!("  {}", l.trim()));
+            }
+        }
+        Err(e) => log.push(format!("MOD ERRO: {}", e)),
+    }
+    let _ = fs::remove_file(&tmp);
+}
+
 // ---------------------------------------------------------------- GUI
 /// Estado da GUI.
 ///
@@ -737,6 +1871,8 @@ struct App {
     nat_w: u32,
     nat_h: u32,
     use_gamescope: bool,
+    tab: u8,
+    mod_opts: ModOpts,
 }
 
 /// Construcao e atualizacao do estado da GUI.
@@ -760,6 +1896,8 @@ impl App {
             nat_w: 1280,
             nat_h: 1024,
             use_gamescope: true,
+            tab: 0,
+            mod_opts: ModOpts::default(),
         };
         if let Some((w, h)) = load_cfg() {
             app.out_w = w;
@@ -806,6 +1944,87 @@ impl App {
     fn say(&mut self, s: impl Into<String>) {
         self.log.push(s.into());
     }
+
+    /// Aba do mod: configuracao fisica do distribuidor + instalar/desinstalar.
+    fn ui_mod(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Mod Distribuidor + Carburador").strong());
+        ui.label(
+            egui::RichText::new(
+                "Ignicao mecanica para motores carburados: avanco inicial, curva centrifuga \
+                 por rpm, avanco a vacuo, dwell do platinado, desgaste e detonacao.",
+            )
+            .small(),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("estado:");
+            match mod_state(&self.dir()) {
+                Some(s) => ui.colored_label(
+                    egui::Color32::from_rgb(80, 200, 120),
+                    format!("instalado ({})", s),
+                ),
+                None => ui.colored_label(egui::Color32::from_rgb(230, 160, 60), "nao instalado"),
+            };
+            ui.separator();
+            ui.label("UTMT:");
+            if utmt_dir().is_some() {
+                ui.colored_label(egui::Color32::from_rgb(80, 200, 120), "ok");
+            } else {
+                ui.colored_label(egui::Color32::RED, "ausente");
+            };
+        });
+        ui.label(
+            egui::RichText::new(format!("ini: {}", mod_ini_path().display()))
+                .monospace()
+                .small(),
+        );
+        ui.separator();
+        ui.label(egui::RichText::new("Configuracao do distribuidor").strong());
+        ui.add(egui::Slider::new(&mut self.mod_opts.avanco_inicial, 0..=20).text("avanco inicial (graus)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.cent_total, 0..=30).text("centrifugo total (graus)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.rpm_inicio, 600..=4000).text("rpm de inicio do centrifugo"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.rpm_fim, 1200..=7000).text("rpm de fim (curva travada)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.curva, 0..=2).text("curva: 0 linear, 1 progressiva, 2 rapida"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.vac_total, 0..=20).text("vacuo total (graus)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.vac_limiar, -0.8..=1.0).text("limiar de vacuo (bar)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.dwell, 20..=70).text("dwell do platinado (graus)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.desgaste, 0..=100).text("desgaste do platinado (%)"));
+        ui.add(egui::Slider::new(&mut self.mod_opts.ganho, 0..=100).text("ganho de potencia (%)"));
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("Instalar mod").clicked() {
+                let d = self.dir();
+                self.say("MOD: aplicando (pode levar ~1 min)...");
+                mod_install(&d, &self.mod_opts.clone(), &mut self.log);
+                self.refresh();
+            }
+            if ui.button("Desinstalar").clicked() {
+                let d = self.dir();
+                mod_uninstall(&d, &mut self.log);
+                self.refresh();
+            }
+            if ui.button("Verificar no arquivo").clicked() {
+                let d = self.dir();
+                mod_check(&d, &mut self.log);
+            }
+            if ui.button("Salvar config").clicked() {
+                match mod_write_ini(&self.mod_opts) {
+                    Ok(p) => self.log.push(format!("MOD config: {}", p.display())),
+                    Err(e) => self.log.push(format!("MOD ERRO: {}", e)),
+                }
+            }
+        });
+        ui.separator();
+        ui.label(egui::RichText::new("Log").strong());
+        egui::ScrollArea::vertical()
+            .max_height(150.0)
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                for l in &self.log {
+                    ui.label(egui::RichText::new(l).monospace().small());
+                }
+            });
+    }
 }
 
 /// `true` se o executavel existe em algum diretorio do `PATH`.
@@ -827,6 +2046,16 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.selectable_label(self.tab == 0, "Fixes do jogo").clicked() {
+                    self.tab = 0;
+                }
+                if ui.selectable_label(self.tab == 1, "Mod Distribuidor + Carburador").clicked() {
+                    self.tab = 1;
+                }
+            });
+            ui.separator();
+            if self.tab == 0 {
             // ---- pasta do jogo
             ui.group(|ui| {
                 ui.horizontal(|ui| {
@@ -1133,6 +2362,9 @@ impl eframe::App for App {
                         ui.label(egui::RichText::new(l).monospace().small());
                     }
                 });
+            } else {
+                self.ui_mod(ui);
+            }
         });
     }
 }
@@ -1212,6 +2444,10 @@ fn run_cli(args: &[String]) {
             match data_state(&game_dir) {
                 Some(s) => println!("data      : patches aplicados ({})", s),
                 None => println!("data      : nao aplicado (use --data-fix)"),
+            }
+            match mod_state(&game_dir) {
+                Some(s) => println!("mod dist  : instalado ({})", s),
+                None => println!("mod dist  : nao instalado (use --mod-install)"),
             }
             println!(
                 "utmt      : {}",
@@ -1315,6 +2551,40 @@ fn run_cli(args: &[String]) {
                 println!("{}", l);
             }
         }
+        "--mod-install" => {
+            let mut o = ModOpts::default();
+            for a in rest.iter().skip(1) {
+                if let Some((k, v)) = a.split_once('=') {
+                    if !o.set(k, v) {
+                        log.push(format!("chave desconhecida: {}", k));
+                    }
+                }
+            }
+            mod_install(&game_dir, &o, &mut log);
+        }
+        "--mod-uninstall" => mod_uninstall(&game_dir, &mut log),
+        "--mod-check" => mod_check(&game_dir, &mut log),
+        "--mod-set" => {
+            let mut o = ModOpts::default();
+            for a in rest.iter().skip(1) {
+                if let Some((k, v)) = a.split_once('=') {
+                    if !o.set(k, v) {
+                        log.push(format!("chave desconhecida: {}", k));
+                    }
+                }
+            }
+            match mod_write_ini(&o) {
+                Ok(p) => log.push(format!("MOD config: {}", p.display())),
+                Err(e) => log.push(format!("MOD ERRO: {}", e)),
+            }
+        }
+        "--mod-status" => {
+            log.push(format!(
+                "MOD   : {}",
+                mod_state(&game_dir).unwrap_or_else(|| "nao instalado".into())
+            ));
+            log.push(format!("MOD ini: {}", mod_ini_path().display()));
+        }
         "--help" | "-h" => {
             println!("mcml-fixer [--dir PASTA] <acao>");
             println!("  --check                    status (libs, GEN8, device, EDID)");
@@ -1328,8 +2598,16 @@ fn run_cli(args: &[String]) {
             println!("  --patch-gen8 LARGURAxALT   patch so no GEN8 (com backup)");
             println!("  --revert-gen8              restaura game.unx");
             println!("  --play [LARGURAxALT]       inicia o jogo (gamescope)");
+            println!("  --mod-install [k=v ...]    instala o mod Distribuidor + Carburador");
+            println!("  --mod-uninstall            remove o mod Distribuidor + Carburador");
+            println!("  --mod-check                confere o mod dentro do game.unx");
+            println!("  --mod-set k=v ...          grava a configuracao do mod");
+            println!("  --mod-status               estado do mod");
             println!("  sem argumentos             abre a GUI");
         }
         other => println!("acao desconhecida: {} (use --help)", other),
+    }
+    for l in &log {
+        println!("{}", l);
     }
 }
