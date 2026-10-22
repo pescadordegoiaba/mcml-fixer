@@ -196,6 +196,16 @@ mcml-fixer --mod-uninstall          # remove o mod (restaura backup)
 mcml-fixer --dir "/caminho/do/jogo" --check
 ```
 
+## Documentação
+
+- `docs/MOD.md` — o mod por dentro (física, motor, carburador, loja, configuração).
+- `docs/RESEARCH.md` — achados da varredura do decompilado (funções mortas, punições).
+- `docs/DEV.md` — **opções ocultas** (dinheiro).
+- `docs/BUGS.md` — bugs encontrados e como foram fechados.
+- `docs/SOURCE.md` — mapa do binário e do `game.unx`.
+
+Varredura reproduzível: `python3 tools/scan.py`.
+
 ## Patches no `game.unx` (cursor + GUI do PC)
 
 Três correções que **não** são byte-patch, porque mexem em sprite, flag de

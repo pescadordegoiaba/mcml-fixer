@@ -16,6 +16,7 @@ Duas partes independentes que compartilham o mesmo menu:
 
 ## 1. Onde o mod se pendura no código nativo
 
+
 Três pontos de solda, todos por `QueueFindReplace` com âncora única verificada
 (nada de byte-patch de bytecode):
 
@@ -45,6 +46,7 @@ propaga para tudo que lê torque: aceleração, dinamômetro e HUD. E publicar
 ---
 
 ## 2. Física do distribuidor
+
 
 ### Avanço total
 
@@ -116,6 +118,7 @@ sobe a temperatura.
 
 ## 3. Potência real (torque × rpm)
 
+
 Até aqui, `hp` e `torque` eram duas curvas independentes, ambas escritas à mão.
 Agora `hp` é **derivado** do torque instantâneo e do giro — a relação física
 `P = T · ω` — e é esse valor que o jogo usa para acelerar.
@@ -177,6 +180,7 @@ a curva antiga. O carro passa a precisar de giro para render.
 ---
 
 ## 4. Motor: um só lugar para todo upgrade
+
 
 Antes, cada peça era aplicada em pontos diferentes do Step — e a maioria em lugares
 onde o valor já tinha sido consumido. `hp` e `torque` são **recalculados do zero** a cada
@@ -264,6 +268,7 @@ Consequências:
 
 ## 5. Carburador: circuitos novos
 
+
 O jogo já modela `gicle`, `gicle_2nd` (segundo corpo) e oito tipos de
 carburador, com `_gicle_ideal` e `_sensibilidade` por tipo, e converte o
 desvio em AFR:
@@ -324,7 +329,34 @@ Pobre perde muito mais que rico.
 
 ---
 
-## 6. Menu (F6)
+## 6. Punições por tunar: removidas
+
+O jogo original sabotava carro montado em três pontos, todos condicionados a
+`_mod_points > 5`:
+
+| Onde | O que fazia |
+|---|---|
+| `_traction_efficiency` (linha 1277) | tração **0,5** abaixo de 60 km/h com pneu de rua |
+| `_launch_grip` (linha 1362) | grip **0,1** em 1ª–3ª abaixo de 80 km/h com `torque > 1000` |
+| `_max_acc` (linhas 1474/3257/3757) | teto de aceleração 21 → 12 |
+
+O `_max_acc` caiu na Fase 1; os dois primeiros agora. Com a física da Fase 2
+(`F = T·g/r`, limitada por `μ·m·g` e `phys_slip`), a punição virou redundante — o excesso
+de força já vira patinação de forma proporcional.
+
+Também nesta versão:
+
+- **Corte de giro por modelo** no distribuidor (`lim[8]`: Original 5500, Competição 7500).
+  Acima do corte o fator vira `0` (corta faísca), limitado também por `car.rpm`.
+- **Knock desgasta motor**: `knock > 0,6` tira `0,5·knock·dt` do cabeçote e `0,25·knock·dt`
+  do pistão, que o `motor_desgaste` transforma em perda de torque.
+- **`cash_guard`**: dinheiro nunca fica negativo, e a confirmação do dinamômetro passou a
+  usar `>=` (antes `>`, então não dava para pagar o valor exato).
+- **Telemetria do noguintech**: torque, potência, AFR, avanço, patinação, **placa** e
+  **FIPE**, com alerta de KNOCK.
+
+## 7. Menu (F6)
+
 
 | Tecla | Ação |
 |---|---|
@@ -346,7 +378,8 @@ pisca, porque o passe CRT (`obj_crt_Draw_77`, depth 400) redesenha a
 
 ---
 
-## 7. Loja TOTORTO
+## 8. Loja TOTORTO
+
 
 Categoria própria, **anexada no fim** (índice 18) para não deslocar as
 categorias 0–17:
@@ -368,7 +401,8 @@ upgrade pago. Motor injetado não recebe distribuidor (`car.carburador > 0`).
 
 ---
 
-## 8. Arte (sprite externo)
+## 9. Arte (sprite externo)
+
 
 O ícone é carregado por `sprite_add` em runtime, e **este runner é
 sandboxed**: só resolve arquivos na **raiz** da pasta de save.
@@ -393,7 +427,8 @@ convertido em alfa.
 
 ---
 
-## 9. Estado e arquivos
+## 10. Estado e arquivos
+
 
 | Caminho | O quê |
 |---|---|
@@ -409,7 +444,8 @@ Config antiga (`dist_cfg` sem `ver`) migra uma vez: `ganho` sobe de 50 para 100.
 
 ---
 
-## 10. Configuração (ini)
+## 11. Configuração (ini)
+
 
 `~/.config/My_Car_My_Life/mod_distribuidor.ini` é lido **uma vez no boot**
 (`global.mod_dist_carregar()`) e define os padrões de carro novo:
@@ -465,7 +501,8 @@ Ajustes feitos no F6 continuam valendo: o F6 não escreve no ini, logo não muda
 Quando você quiser que o ini volte a mandar, basta um `--phys`/`--mod-set` (qualquer
 chave), que gera um `rev` novo.
 
-## 10. Verificação
+## 12. Verificação
+
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no
 decompilado. Os 25 atuais:

@@ -570,7 +570,50 @@ global.mod_dist_def = {
     curva: 1, vac_total: 12, vac_limiar: 0, dwell: 45, desgaste: 0, ganho: 100
 };
 // padroes de fisica: o ini [fisica] sobrescreve; cada carro copia ao criar
+// globais do jogo que o mod le: garante que existem em qualquer sala
+if (!variable_global_exists(""turbo_pressure"")) global.turbo_pressure = 0;
+if (!variable_global_exists(""turbo"")) global.turbo = 0;
+if (!variable_global_exists(""iat"")) global.iat = 25;
+if (!variable_global_exists(""temp"")) global.temp = 25;
+if (!variable_global_exists(""engine"")) global.engine = 0;
+if (!variable_global_exists(""rpm"")) global.rpm = 900;
+if (!variable_global_exists(""kmh"")) global.kmh = 0;
+if (!variable_global_exists(""gear"")) global.gear = 0;
+if (!variable_global_exists(""ignicao"")) global.ignicao = 0;
+if (!variable_global_exists(""afr"")) global.afr = 14.7;
+if (!variable_global_exists(""cash"")) global.cash = 0;
+if (!variable_global_exists(""dt"")) global.dt = 1;
+
 global.mod_rev = 0;
+// ---- dinheiro (oculto): [dev] cash=N ----
+global.dev_cash = 0;
+global.dev_cash_modo = 0;   // 0 = piso (nunca abaixo de N), 1 = valor exato
+global.dev_cash_rev = -1;
+
+global.dev_cash_aplicar = function() {
+    if (global.dev_cash <= 0) return 0;
+    if (global.dev_cash_modo == 1) {
+        if (global.dev_cash_rev == global.mod_rev) return 0;
+        global.cash = global.dev_cash;
+        global.dev_cash_rev = global.mod_rev;
+        return 1;
+    }
+    if (global.cash < global.dev_cash) {
+        global.cash = global.dev_cash;
+        return 1;
+    }
+    return 0;
+};
+
+// dinheiro nunca fica negativo
+global.cash_guard = function() {
+    if (!variable_global_exists(""cash"")) return 0;
+    if (global.cash < 0) {
+        global.cash = 0;
+        return 1;
+    }
+    return 0;
+};
 global.phys_def = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
 global.mod_dist_estado = { menu: 0, sel: 0, aviso: """", spr: -1, spr_try: 0, rpm: 800, map: 0, cent: 0, vac: 0, avanco: 10, ideal: 0, bonus: 0, q: 1, knock: 0, dwell_ef: 45, dwell_ms: 5, tok: -1, icon: -1, icon_try: 0 };
 global.mod_dist_ativo = 0;
@@ -593,9 +636,10 @@ global.mod_dist_modelo = function() {
 };
 
 // limites fisicos por modelo: [ini_min, ini_max, cent_max, rpm_fim_max, vac_max, dwell_min, dwell_max, ganho_max]
+// [ini_min, ini_max, cent_max, rpm_fim_max, vac_max, dwell_min, dwell_max, ganho_max, corte_rpm]
 global.mod_dist_limites = function(modelo) {
-    if (modelo == 1) return [0, 12, 20, 5500, 14, 38, 52, 45];
-    return [0, 20, 30, 7500, 20, 30, 60, 100];
+    if (modelo == 1) return [0, 12, 20, 5500, 14, 38, 52, 45, 5500];
+    return [0, 20, 30, 7500, 20, 30, 60, 100, 7500];
 };
 
 // configuracao salva junto com o carro (persiste no save do jogo)
@@ -767,6 +811,11 @@ global.mod_dist_fator = function() {
     if (modelo <= 0) return 1;
     var d = global.mod_dist_cfg();
     var lim = global.mod_dist_limites(modelo);
+    // corte de giro do modelo: acima disso o distribuidor corta a faisca
+    var _corte = lim[8];
+    var _rpm_max_carro = 99999;
+    if (variable_struct_exists(car, ""rpm"")) _rpm_max_carro = car.rpm;
+    if (global.rpm > min(_corte, _rpm_max_carro)) return 0;
     var adv = global.mod_dist_calcular();
     var tn = clamp((e.rpm - 800) / 7200, 0, 1);
     var ideal = lerp(14, 38, tn) - (e.map * 3.5);
@@ -831,6 +880,15 @@ global.mod_dist_dano = function() {
     limite -= max(0, _iat - 25) * 0.15;          // ar quente = menos avanco
     limite -= max(0, _ect - 95) * 0.20;          // motor quente = menos avanco
     e.knock = max(0, e.avanco - limite);
+    // detonacao castiga cabecote e pistao (entra em motor_desgaste)
+    if (e.knock > 0.6) {
+        if (variable_struct_exists(car, ""vcabecote"")) {
+            car.vcabecote = max(0, car.vcabecote - (e.knock * dt * 0.5));
+        }
+        if (variable_struct_exists(car, ""vpistao"")) {
+            car.vpistao = max(0, car.vpistao - (e.knock * dt * 0.25));
+        }
+    }
     // dwell grande em baixa rotacao satura a bobina: esquenta e falha
     if (e.dwell_ms > 8 && e.rpm < 2500) {
         global.temp += (e.dwell_ms - 8) * 0.01 * dt;
@@ -1547,6 +1605,8 @@ global.mod_dist_carregar = function() {
         global.phys_def.embreagem = ini_read_real(""fisica"", ""embreagem"", global.phys_def.embreagem);
         global.phys_def.inercia = ini_read_real(""fisica"", ""inercia"", global.phys_def.inercia);
         global.mod_rev = ini_read_real(""mod"", ""rev"", 0);
+        global.dev_cash = ini_read_real(""dev"", ""cash"", 0);
+        global.dev_cash_modo = ini_read_real(""dev"", ""cash_modo"", 0);
         ini_close();
     }
 };
@@ -1682,6 +1742,19 @@ g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0",
     "_acceleration = (_base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty) + _others_aderencia;",
     false);
 
+// --- FASE 3: fim das punicoes por tunar ---
+// a fisica (mu * N + phys_slip) ja limita a tracao; esses descontos so sabotavam
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "        if (_mod_points > 5)", "        if (false)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "        if (global.kmh < 80 && global.gear <= 3 && _mod_points > 5)",
+    "        if (false)", false);
+
+// compra falhava quando o dinheiro era exatamente o preco
+g.QueueFindReplace("gml_Object_obj_ntc_dinamometro_confirm_Step_0",
+    "if (global.cash > global.dinamometro_custo)",
+    "if (global.cash >= global.dinamometro_custo)", false);
+
 g.QueueAppend("gml_Object_obj_player_Step_0", @"
 if (global.mod_dist_ativo) {
     global.mod_dist_dano();
@@ -1699,8 +1772,41 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
 g.QueueAppend("gml_Object_obj_noguiin_Draw_64", @"
 // aplica o ini ao carro salvo quando o arquivo muda (1x por segundo, no maximo)
 global.mod_cfg_aplicar();
+global.dev_cash_aplicar();
+global.cash_guard();
 // desenha so no Draw GUI: fica acima do passe CRT, sem piscar
 global.mod_dist_ui();
+
+// telemetria do noguintech (item comprado) + placa + FIPE
+if (variable_global_exists(""car_data"") && is_array(global.car_data)
+    && global.vehicles_array >= 0 && global.vehicles_array < array_length(global.car_data)) {
+    var _ntc = global.car_data[global.vehicles_array];
+    if (variable_struct_exists(_ntc, ""noguiintech"") && _ntc.noguiintech != 0) {
+        var _tx = display_get_gui_width() - 250;
+        var _ty = 90;
+        draw_set_halign(fa_left);
+        draw_set_valign(fa_top);
+        draw_set_alpha(0.85);
+        draw_text_transformed(_tx, _ty, ""NOGUITECH v"" + string(_ntc.noguiintech), 0.5, 0.5, 0);
+        draw_text_transformed(_tx, _ty + 16, ""torque "" + string(round(global.torque)) + "" Nm"", 0.5, 0.5, 0);
+        draw_text_transformed(_tx, _ty + 30, ""potencia "" + string(round(global.hp)) + "" hp"", 0.5, 0.5, 0);
+        draw_text_transformed(_tx, _ty + 44, ""AFR "" + string(round(global.afr * 10) / 10), 0.5, 0.5, 0);
+        draw_text_transformed(_tx, _ty + 58, ""avanco "" + string(round(global.ignicao)) + "" graus"", 0.5, 0.5, 0);
+        draw_text_transformed(_tx, _ty + 72, ""patinacao "" + string(round(global.phys_slip * 100)) + ""%"", 0.5, 0.5, 0);
+        var _pl = ""SEM PLACA"";
+        if (variable_struct_exists(_ntc, ""plate"")) _pl = string(_ntc.plate);
+        draw_text_transformed(_tx, _ty + 86, ""placa "" + _pl, 0.5, 0.5, 0);
+        if (variable_global_exists(""carro"")) {
+            draw_text_transformed(_tx, _ty + 100, ""FIPE $"" + string(ValueCars()), 0.5, 0.5, 0);
+        }
+        if (global.mod_dist_estado.knock > 0) {
+            draw_set_color(make_color_rgb(255, 90, 60));
+            draw_text_transformed(_tx, _ty + 118, ""KNOCK"", 0.6, 0.6, 0);
+            draw_set_color(c_white);
+        }
+        draw_set_alpha(1);
+    }
+}
 ");
 
 g.QueueFindReplace("gml_GlobalScript_GetNameParts",
@@ -1889,6 +1995,12 @@ ScriptMessage($"MARK phys_npc={(n1.Contains("global.phys_base(torque") && n2.Con
 ScriptMessage($"MARK phys_inercia={(s2.Contains("global.phys_rev(") ? "ok" : "ausente")}");
 ScriptMessage($"MARK phys_cfg={(s1.Contains("global.phys_def") && s1.Contains("ini_read_real") && s1.Contains("car.phys_cfg = ") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cfg_auto={(s1.Contains("global.mod_cfg_aplicar = function") && s1.Contains("cfg_stamp") && s1.Contains("global.mod_rev") ? "ok" : "ausente")}");
+ScriptMessage($"MARK dev_cash={(s1.Contains("global.dev_cash_aplicar") && s1.Contains("global.cash_guard") ? "ok" : "ausente")}");
+ScriptMessage($"MARK no_tracao_pen={(s2.Contains("if (_mod_points > 5)") ? "ausente" : "ok")}");
+ScriptMessage($"MARK no_launch_pen={(s2.Contains("_launch_grip") ? "ausente" : "ok")}");
+ScriptMessage($"MARK corte_giro={(s1.Contains("corte") && s1.Contains("rpm_max_carro") ? "ok" : "ausente")}");
+ScriptMessage($"MARK knock_dano={(s1.Contains("e.knock > 0.6") ? "ok" : "ausente")}");
+ScriptMessage($"MARK hud_ntc={(s3.Contains("NOGUITECH v") && s3.Contains("FIPE") ? "ok" : "ausente")}");
 "#;
 
 fn run_utmt(script: &str, input: &Path, output: Option<&Path>) -> Result<String, String> {
@@ -2127,6 +2239,8 @@ struct ModOpts {
     desgaste: i32,
     ganho: i32,
     phys: PhysOpts,
+    dev_cash: i64,
+    dev_cash_modo: i32,
 }
 
 impl Default for ModOpts {
@@ -2135,6 +2249,8 @@ impl Default for ModOpts {
             ativo: 1, avanco_inicial: 10, cent_total: 22, rpm_inicio: 1000, rpm_fim: 3200,
             curva: 1, vac_total: 12, vac_limiar: 0.0, dwell: 45, desgaste: 0, ganho: 100,
             phys: PhysOpts::default(),
+            dev_cash: 0,
+            dev_cash_modo: 0,
         }
     }
 }
@@ -2146,6 +2262,7 @@ impl ModOpts {
             self.ativo, self.avanco_inicial, self.cent_total, self.rpm_inicio, self.rpm_fim,
             self.curva, self.vac_total, self.vac_limiar, self.dwell, self.desgaste, self.ganho
         ) + &self.phys.to_ini()
+          + &format!("[dev]\ncash={}\ncash_modo={}\n", self.dev_cash, self.dev_cash_modo)
     }
 
     fn set(&mut self, k: &str, v: &str) -> bool {
@@ -2165,6 +2282,17 @@ impl ModOpts {
             _ => {
                 if let Some(k2) = k.strip_prefix("fisica.") {
                     return self.phys.set(k2, v);
+                }
+                match k {
+                    "cash" | "dev.cash" => {
+                        self.dev_cash = v.parse::<i64>().unwrap_or(self.dev_cash);
+                        return true;
+                    }
+                    "cash_modo" | "dev.cash_modo" => {
+                        self.dev_cash_modo = f.map(|x| x as i32).unwrap_or(self.dev_cash_modo);
+                        return true;
+                    }
+                    _ => {}
                 }
                 return false;
             }
@@ -3112,6 +3240,26 @@ fn run_cli(args: &[String]) {
             }
             match mod_write_ini(&o) {
                 Ok(p) => log.push(format!("FISICA: {} chave(s) -> {}", n, p.display())),
+                Err(e) => log.push(format!("MOD ERRO: {}", e)),
+            }
+        }
+        "--dev-cash" => {
+            let mut o = mod_read_ini();
+            let arg = rest.get(1).cloned().unwrap_or_default();
+            if arg == "off" || arg == "0" || arg.is_empty() {
+                o.dev_cash = 0;
+            } else if let Ok(n) = arg.parse::<i64>() {
+                o.dev_cash = n.max(0);
+            } else {
+                log.push("uso: --dev-cash N | --dev-cash off".into());
+            }
+            o.dev_cash_modo = if rest.iter().any(|a| a == "--dev-cash-exato") { 1 } else { 0 };
+            match mod_write_ini(&o) {
+                Ok(_) => log.push(format!(
+                    "cash: {} (modo {})",
+                    o.dev_cash,
+                    if o.dev_cash_modo == 1 { "exato" } else { "piso" }
+                )),
                 Err(e) => log.push(format!("MOD ERRO: {}", e)),
             }
         }
