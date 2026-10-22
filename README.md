@@ -8,7 +8,9 @@ Distribuidor + Carburador** dentro do `game.unx`.
 Tudo é aplicável e revertível, sempre com backup, e sem alterar nada fora da
 pasta do jogo.
 
-## Os seis bugs que isto conserta
+## Os bugs que isto conserta
+
+Seis são de **plataforma** (o jogo não abre ou não responde):
 
 | # | Sintoma | Causa raiz | Correção |
 |---|---|---|---|
@@ -19,28 +21,33 @@ pasta do jogo.
 | 5 | barra de tarefas do PC não responde | testa clique em GUI mas desenha em room; a GUI herdava o tamanho da **janela** (1280x1024) e não da view (1280x720) | `display_set_gui_size(1280,720)` |
 | 6 | barra e botões do app XLO não aparecem | o passe CRT recorta a `application_surface` com coordenadas fixas 1280x720, mas a surface é 1280x1024 — recorta a metade de cima e redesenha por cima | escala a origem do recorte pela razão surface/design |
 
-O detalhamento de cada um — sintoma, evidência medida, causa raiz, correção e
-verificação — está em **[`docs/BUGS.md`](docs/BUGS.md)**.
+Outros doze vieram da varredura do decompilado — punições escondidas por tunar,
+`carburador = -1` derrubando o F6, item de câmbio sem `use_func`, e por aí. Todos
+os 18 estão catalogados com evidência em **[`docs/BUGS.md`](docs/BUGS.md)**.
 
 ## Documentação
 
-- [`docs/BUGS.md`](docs/BUGS.md) — catálogo dos bugs, com as contas que explicam
-  cada um e duas armadilhas de processo (GML de escopo de evento e o checksum do
-  GEN8 no UTMT).
+- [`docs/BUGS.md`](docs/BUGS.md) — os 18 bugs, com as contas que explicam cada um
+  e duas armadilhas de processo (GML de escopo de evento e o checksum do GEN8 no
+  UTMT).
+- [`docs/MOD.md`](docs/MOD.md) — o mod por dentro: física, distribuidor,
+  carburador, motor, câmbios, loja, menu F6 e configuração.
+- [`docs/RESEARCH.md`](docs/RESEARCH.md) — achados da varredura do decompilado
+  (funções mortas, punições, o que foi descartado e por quê).
+- [`docs/DEV.md`](docs/DEV.md) — **opções ocultas** (dinheiro).
 - [`docs/SOURCE.md`](docs/SOURCE.md) — passeio pela source inteira: constantes,
   cada função, os scripts CSX embutidos, fluxo de dados, GUI e artefatos em
   runtime.
-- [`docs/MOD.md`](docs/MOD.md) — o mod Distribuidor + Carburador: onde ele se
-  pendura no código nativo, as fórmulas de avanço e de mistura, o menu, a
-  integração no TOTORTO e a regra de sandbox que decide onde a arte pode ficar.
 
-## Mod Distribuidor + Carburador
+Varredura reproduzível: `python3 tools/scan.py`.
+
+## O mod (motor, distribuidor, carburador, câmbios)
 
 Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
 
 ```bash
 mcml-fixer --mod-install                 # aplica (backup automatico)
-mcml-fixer --mod-check                   # 14 marcadores dentro do decompilado
+mcml-fixer --mod-check                   # 45 marcadores dentro do decompilado
 mcml-fixer --mod-status                  # estado + caminho do ini
 mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
 mcml-fixer --mod-uninstall               # restaura o backup
@@ -130,6 +137,27 @@ rpm      45 hp   99 hp   171 hp
 Como o torque já carrega carburador, distribuidor e mods de motor, a potência
 acompanha tudo sem código extra.
 
+### Física do trem de força
+
+A aceleração deixou de ser um número por marcha. O carro puxa por
+`F = T · g / r` (torque, câmbio, raio da roda), limitado por `μ · m · g` e pelo
+`phys_slip` — o excesso de força vira patinação proporcional em vez de ser
+cortado por um teto. Ajustável em `--phys raio=… mu=… share=… embreagem=…
+inercia=…` e aplicado também nos cinco objetos de IA.
+
+### Câmbios de 7 e 8 marchas
+
+Dois câmbios novos pelo caminho nativo do jogo (`car.cambio` 8 e 9):
+
+| Câmbio | Razões | Preço | Teto a 6000 rpm |
+|---|---|---|---|
+| Manual 7 marchas | 9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7 | $45.000 | 211,8 km/h |
+| Manual 8 marchas | 9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55 | $85.000 | 232,3 km/h |
+
+Instalam no fluxo nativo: oficina do Tião (dinamômetro) → inventário → clicar no
+câmbio → `use` → confirmar. As 8 marchas ficam ajustáveis no caderno do "Forjar
+Câmbio", que passou a desenhar 8 linhas sem sobrepor o custo.
+
 ### Menu
 
 `F6` abre · `TAB` cicla Ajuste → Loja → Carburador · `↑↓` escolhe · `←→`
@@ -152,6 +180,14 @@ binário: `PATCH_CSX` (aplica) e `CHECK_CSX` (só lê e confere).
 O `--data-fix` sempre parte de `assets/game.unx.orig`, porque o UTMT recusa
 arquivo com o `GEN8` alterado (o checksum do chunk usa
 `DefaultWindowWidth/Height`).
+
+O GML do mod não é escrito à mão dentro do CSX: fica em `mod/gen_mod.py` (blocos
+GML + `QueueFindReplace`) e o `mod/build.py` gera o `mod/mod_dist2.csx` e injeta
+no `src/main.rs`. Depois de mexer em qualquer patch:
+
+```bash
+python3 mod/build.py && cargo build --release
+```
 
 ## Compilar
 
@@ -195,16 +231,6 @@ mcml-fixer --phys raio=0.33 mu=0.85 # defaults da fisica (carros novos)
 mcml-fixer --mod-uninstall          # remove o mod (restaura backup)
 mcml-fixer --dir "/caminho/do/jogo" --check
 ```
-
-## Documentação
-
-- `docs/MOD.md` — o mod por dentro (física, motor, carburador, loja, configuração).
-- `docs/RESEARCH.md` — achados da varredura do decompilado (funções mortas, punições).
-- `docs/DEV.md` — **opções ocultas** (dinheiro).
-- `docs/BUGS.md` — bugs encontrados e como foram fechados.
-- `docs/SOURCE.md` — mapa do binário e do `game.unx`.
-
-Varredura reproduzível: `python3 tools/scan.py`.
 
 ## Patches no `game.unx` (cursor + GUI do PC)
 
