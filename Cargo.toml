@@ -1,0 +1,20 @@
+[package]
+name = "mcml-fixer"
+version = "1.0.0"
+edition = "2021"
+description = "CLI + GUI para fazer My Car My Life (GameMaker 1.4) rodar em Linux moderno: libs legadas, resolucao nativa, cursor e UI do PC"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/pescadordegoiaba/mcml-fixer"
+keywords = ["gamemaker", "linux", "compatibility", "modding", "egui"]
+categories = ["command-line-utilities", "games"]
+
+[dependencies]
+eframe = { version = "0.28", default-features = false, features = ["glow", "wayland", "x11"] }
+egui = "0.28"
+libc = "0.2"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 4

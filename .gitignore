@@ -1,0 +1,17 @@
+# build
+/target/
+**/*.rs.bk
+
+# backups do jogo / artefatos locais (nunca vao para o repo)
+*.unx
+*.unx.orig
+*.unx.bak
+*.orig
+*.bak
+.mcml-*
+
+# editores / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
