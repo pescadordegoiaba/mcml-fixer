@@ -1009,6 +1009,19 @@ global.mod_dist_pode = function() {
     return (car.carburador > 0);
 };
 
+// ---- potencia real: hp = torque(Nm) * rpm / K ----
+// A potencia deixa de ser uma curva propria e passa a ser derivada do torque
+// instantaneo e do giro, como num motor de verdade (P = T * w).
+// Em unidades imperiais K = 5252 (lb-ft). Aqui o torque esta em Nm e o jogo
+// mede hp, entao K = 7121 em unidades puras; 0.626 e a calibracao contra a
+// propria curva de torque do jogo, para o pico de torque*rpm cair exatamente
+// no maxhp declarado do motor (medido nas tres faixas: 45, 99 e 171 hp).
+global.pot_hp = function(_torque, _rpm, _maxtorque, _maxrpm, _maxhp) {
+    if (_maxhp <= 0 || _maxtorque <= 0 || _maxrpm <= 0) return 0;
+    var _k = 0.626 * _maxtorque * _maxrpm / _maxhp;
+    return (_torque * _rpm) / _k;
+};
+
 // ---- carburador: circuitos de lenta, agulha e borboleta ----
 global.mod_carb_gicle_ideal = function(_carb) {
     switch (_carb) {
@@ -1274,6 +1287,27 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
     "if (global.mod_dist_ativo) { global.torque *= global.mod_dist_fator(); global.ignicao = global.mod_dist_estado.avanco; } var _base_acceleration = (global.torque * global.hp) / (global.weight * 750);",
     false);
 
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "global.hp = clamp(global.hp, 0, global.maxhp * 1.2);",
+    "global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_Step_0",
+    "hp = clamp(hp, 0, maxhp * 1.2);",
+    "hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.2);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Step_0",
+    "hp = clamp(hp, 0, maxhp * 1.2);",
+    "hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.2);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_opponent_Step_0",
+    "hp = clamp(hp, 0, maxhp * 1.1);",
+    "hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.1);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0",
+    "hp = clamp(hp, 0, maxhp * 1.1);",
+    "hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.1);",
+    false);
+
 g.QueueAppend("gml_Object_obj_player_Step_0", @"
 if (global.mod_dist_ativo) {
     global.mod_dist_dano();
@@ -1448,6 +1482,11 @@ try { s4 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_pc_window_Draw_0")
 try { s5 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_GetNameParts"), ctx, st); } catch { s5 = "ERR"; }
 try { s6 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Delivery"), ctx, st); } catch { s6 = "ERR"; }
 try { s7 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Inventory"), ctx, st); } catch { s7 = "ERR"; }
+string n1 = "", n2 = "", n3 = "", n4 = "";
+try { n1 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_Step_0"), ctx, st); } catch { n1 = "ERR"; }
+try { n2 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_TOUGE_Step_0"), ctx, st); } catch { n2 = "ERR"; }
+try { n3 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_opponent_Step_0"), ctx, st); } catch { n3 = "ERR"; }
+try { n4 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_NPC_Step_0"), ctx, st); } catch { n4 = "ERR"; }
 ScriptMessage($"MARK versao={(s1.Contains("_vac_inhg") ? "v2.1-fisica" : "antiga")}");
 ScriptMessage($"MARK item={(s1.Contains("mod_dist_comprar") ? "ok" : "ausente")}");
 ScriptMessage($"MARK limites={(s1.Contains("mod_dist_limites") ? "ok" : "ausente")}");
@@ -1462,6 +1501,8 @@ ScriptMessage($"MARK shop_instala={(s7.Contains("_pv_inst") ? "ok" : "ausente")}
 ScriptMessage($"MARK carb={(s1.Contains("mod_carb_desvio") && s1.Contains("mod_carb_cfg") ? "ok" : "ausente")}");
 ScriptMessage($"MARK carb_hook={(s2.Contains("mod_carb_desvio") && s2.Contains("_mcarb") ? "ok" : "ausente")}");
 ScriptMessage($"MARK torque={(s2.Contains("global.torque *= global.mod_dist_fator()") && s2.Contains("global.ignicao = global.mod_dist_estado.avanco") ? "ok" : "ausente")}");
+ScriptMessage($"MARK potencia_real={(s1.Contains("global.pot_hp = function") && s2.Contains("global.pot_hp(global.torque") ? "ok" : "ausente")}");
+ScriptMessage($"MARK pot_npc={(n1.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") && n2.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") && n3.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") && n4.Contains("global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp)") ? "ok" : "ausente")}");
 "#;
 
 fn run_utmt(script: &str, input: &Path, output: Option<&Path>) -> Result<String, String> {

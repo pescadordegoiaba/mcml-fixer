@@ -114,7 +114,69 @@ sobe a temperatura.
 
 ---
 
-## 3. Carburador: circuitos novos
+## 3. Potência real (torque × rpm)
+
+Até aqui, `hp` e `torque` eram duas curvas independentes, ambas escritas à mão.
+Agora `hp` é **derivado** do torque instantâneo e do giro — a relação física
+`P = T · ω` — e é esse valor que o jogo usa para acelerar.
+
+```gml
+global.pot_hp = function(_torque, _rpm, _maxtorque, _maxrpm, _maxhp) {
+    if (_maxhp <= 0 || _maxtorque <= 0 || _maxrpm <= 0) return 0;
+    var _k = 0.626 * _maxtorque * _maxrpm / _maxhp;
+    return (_torque * _rpm) / _k;
+};
+```
+
+**Por que 0,626.** Em unidades imperiais a constante é 5252 (lb-ft). O torque do
+jogo está em Nm e a potência em hp, então a constante pura seria 7121 —
+`1 hp = 550 ft·lb/s`, `1 Nm = 0,7376 lb-ft` → `hp = Nm · rpm / 7121`. Só que a
+curva de torque do próprio jogo cai para 0,52·maxtorque no corte, então usar
+7121 faria o pico ficar em ~85% do `maxhp` declarado. O 0,626 é a calibração
+contra a curva do jogo: medido em três motores (45, 99 e 171 hp), o pico de
+`torque·rpm` cai exatamente no valor declarado.
+
+**Quem usa.** Cinco pontos de solda, todos na linha de clamp do `hp` (o fim do
+bloco de curvas, antes da física):
+
+| Objeto | Papel |
+|---|---|
+| `obj_player_Step_0` | jogador |
+| `obj_ia_car_Step_0` | trânsito/rival comum |
+| `obj_ia_car_TOUGE_Step_0` | modo touge |
+| `obj_ia_opponent_Step_0` | oponentes de corrida |
+| `obj_ia_car_NPC_Step_0` | NPC de trânsito |
+
+```gml
+// antes
+hp = clamp(hp, 0, maxhp * 1.2);
+// depois
+hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.2);
+```
+
+Como o torque já é multiplicado pelo carburador, pelo distribuidor e pelos
+mods de motor, a potência acompanha tudo isso sem código extra: mistura pobre
+derruba `torque`, que derruba `hp`, que derruba a aceleração.
+
+**Consequência de comportamento.** A curva fica "pontuda", como motor de
+verdade: sobe com o giro até o pico e cai depois.
+
+```
+rpm      45 hp   99 hp   171 hp
+1500       9,2    18,6     45,6
+2200      19,4    39,3     96,2
+3000      32,2    64,5    134,7
+4200      44,9    98,3    170,5   <- pico
+5000      41,7    96,7    158,5
+5500      37,4    91,1    142,0
+```
+
+Ou seja: embaixo mais fraco, no pico igual ao declarado, em cima mais forte que
+a curva antiga. O carro passa a precisar de giro para render.
+
+---
+
+## 4. Carburador: circuitos novos
 
 O jogo já modela `gicle`, `gicle_2nd` (segundo corpo) e oito tipos de
 carburador, com `_gicle_ideal` e `_sensibilidade` por tipo, e converte o
@@ -176,7 +238,7 @@ Pobre perde muito mais que rico.
 
 ---
 
-## 4. Menu (F6)
+## 5. Menu (F6)
 
 | Tecla | Ação |
 |---|---|
@@ -198,7 +260,7 @@ pisca, porque o passe CRT (`obj_crt_Draw_77`, depth 400) redesenha a
 
 ---
 
-## 5. Loja TOTORTO
+## 6. Loja TOTORTO
 
 Categoria própria, **anexada no fim** (índice 18) para não deslocar as
 categorias 0–17:
@@ -220,7 +282,7 @@ upgrade pago. Motor injetado não recebe distribuidor (`car.carburador > 0`).
 
 ---
 
-## 6. Arte (sprite externo)
+## 7. Arte (sprite externo)
 
 O ícone é carregado por `sprite_add` em runtime, e **este runner é
 sandboxed**: só resolve arquivos na **raiz** da pasta de save.
@@ -245,7 +307,7 @@ convertido em alfa.
 
 ---
 
-## 7. Estado e arquivos
+## 8. Estado e arquivos
 
 | Caminho | O quê |
 |---|---|
@@ -261,15 +323,15 @@ Config antiga (`dist_cfg` sem `ver`) migra uma vez: `ganho` sobe de 50 para 100.
 
 ---
 
-## 8. Verificação
+## 9. Verificação
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no
-decompilado. Os 14 atuais:
+decompilado. Os 16 atuais:
 
 ```
 versao=v2.1-fisica  item  limites  dano  potencia  ui
 loja  shop_tile  shop_preco  shop_entrega  shop_instala
-carb  carb_hook  torque
+carb  carb_hook  torque  potencia_real  pot_npc
 ```
 
 `carb` confere as funções `mod_carb_cfg`/`mod_carb_desvio`; `carb_hook` confere

@@ -104,6 +104,32 @@ lenta +10                9.95  0.927  0.644
 lenta -10               17.38  0.671  0.466
 ```
 
+### Potência real (torque × rpm)
+
+`hp` deixou de ser uma curva escrita à mão: agora é derivado do torque
+instantâneo e do giro, `P = T · ω`, e é isso que o jogo usa para acelerar —
+no jogador e nos cinco objetos de IA (trânsito, touge, oponentes, NPC).
+
+```gml
+hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.2);
+```
+
+A constante é calibrada por motor para o pico de `torque·rpm` cair exatamente
+no `maxhp` declarado (medido em 45, 99 e 171 hp). Efeito prático: a curva fica
+pontuda como motor de verdade — mais fraca embaixo, igual no pico e mais forte
+no corte.
+
+```
+rpm      45 hp   99 hp   171 hp
+1500       9,2    18,6     45,6
+3000      32,2    64,5    134,7
+4200      44,9    98,3    170,5   <- pico
+5500      37,4    91,1    142,0
+```
+
+Como o torque já carrega carburador, distribuidor e mods de motor, a potência
+acompanha tudo sem código extra.
+
 ### Menu
 
 `F6` abre · `TAB` cicla Ajuste → Loja → Carburador · `↑↓` escolhe · `←→`
