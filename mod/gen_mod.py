@@ -603,6 +603,85 @@ global.motor_torque = function(_car, _rpm, _rpm_max, _afr) {
     return _m;
 };
 
+// =====================================================================
+//  FISICA DE TRACAO (modelo derivado do Rigs of Rods)
+//  F = T * relacao * efic / raio ; limite = mu * N ; excedente = patinacao
+// =====================================================================
+global.phys_slip = 0;
+
+global.phys_cfg = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return undefined;
+    if (!variable_struct_exists(car, "phys_cfg") || is_undefined(car.phys_cfg)) {
+        car.phys_cfg = { raio: 0.31, eficiencia: 0.90, mu: 1.00, share: 1.00, embreagem: 0, inercia: 0.15 };
+    }
+    return car.phys_cfg;
+};
+
+// calibracao: reproduz o termo antigo (torque*hp)/(weight*750) em 1a marcha.
+// weight esta em TONELADAS, entao a massa em kg entra x1000. Usa o hp CORRENTE
+// (nao o maxhp) para casar exatamente com a formula antiga; o 0.90 e a
+// eficiencia de referencia, entao abaixar a eficiencia realmente tira forca.
+global.phys_k = function(_hp, _raio, _g1) {
+    if (_g1 <= 0 || _raio <= 0 || _hp <= 0) return 0;
+    return (_hp * _raio * 1000) / (750 * _g1 * 0.90);
+};
+
+global.phys_forca = function(_torque, _relacao, _raio, _efic) {
+    if (_raio <= 0 || _relacao <= 0) return 0;
+    return (_torque * _relacao * _efic) / _raio;
+};
+
+global.phys_limite = function(_massa_kg, _mu, _share) {
+    return _massa_kg * 9.81 * _mu * _share;
+};
+
+// aderencia por composto e temperatura
+global.phys_mu = function(_pneu, _temp) {
+    var _base = 0.92;
+    switch (_pneu) {
+        case 1: _base = 1.05; break;
+        case 2: _base = 1.25; break;
+        case 3: _base = 0.78; break;
+    }
+    var _ideal = (_pneu == 3) ? 55 : 80;
+    if (is_undefined(_temp) || _temp <= 0) return _base;
+    var _desvio = abs(_temp - _ideal) / 60;
+    return _base * clamp(1 - (_desvio * 0.35), 0.6, 1);
+};
+
+// termo base de aceleracao, na mesma escala do jogo; atualiza global.phys_slip
+global.phys_base = function(_torque, _relacao, _raio, _massa_kg, _k, _efic, _mu, _share) {
+    global.phys_slip = 0;
+    if (_massa_kg <= 0 || _raio <= 0 || _relacao <= 0 || _k <= 0) return 0;
+    var _f = global.phys_forca(_torque, _relacao, _raio, _efic);
+    var _lim = global.phys_limite(_massa_kg, _mu, _share);
+    if (_lim > 0 && _f > _lim) {
+        global.phys_slip = clamp((_f - _lim) / _f, 0, 1);
+        _f = _lim;
+    }
+    return (_f / _massa_kg) * _k;
+};
+
+// inercia: gira livre com a embreagem aberta (rpm += dt * T / I)
+global.phys_rev = function(_torque, _response, _dt) {
+    var _i = max(0.02, global.phys_cfg().inercia) / clamp(_response, 0.5, 2);
+    return ((_torque / _i) * 9.549) * (_dt / 60);
+};
+
+// embreagem: capacidade e torque transmitido (opt-in via phys_cfg.embreagem)
+global.phys_clutch_cap = function(_maxtorque, _g1) {
+    return 1.5 * _maxtorque * abs(_g1);
+};
+
+global.phys_clutch = function(_torque_motor, _slip, _abertura, _cap) {
+    if (_cap <= 0) return _torque_motor;
+    var _t = clamp(_slip * _abertura * _cap, -_cap, _cap);
+    _t *= 1 - exp(-abs(_slip));
+    if (abs(_t) > abs(_torque_motor)) _t = _torque_motor;
+    return _t;
+};
+
 // ---- carburador: circuitos de lenta, agulha e borboleta ----
 global.mod_carb_gicle_ideal = function(_carb) {
     switch (_carb) {
@@ -951,6 +1030,71 @@ g.QueueFindReplace("gml_Object_obj_ia_opponent_Step_0",
 g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0",
     "hp = clamp(hp, 0, maxhp * 1.1);",
     "hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.1);",
+    false);
+
+// --- FASE 2: trem de forca ---
+// 1) base do jogador: forca na roda com relacao real e limite de aderencia
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "var _base_acceleration = (global.torque * global.hp) / (global.weight * 750);",
+    "var _pc = global.phys_cfg(); var _g1 = gear_ratios[0]; var _gr = gear_ratios[max(0, global.gear - 1)]; var _base_acceleration = global.phys_base(global.torque, _gr, _pc.raio, global.weight * 1000, global.phys_k(global.hp, _pc.raio, _g1), _pc.eficiencia, global.phys_mu(global.car_data[global.vehicles_array].pneu, global.heat_tire), _pc.share);",
+    false);
+
+// 2) re: mesma fisica, relacao da re
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "var _base_acceleration = (global.torque * global.hp) / (global.weight * 375);",
+    "var _base_acceleration = global.phys_base(global.torque, gear_ratios[2], _pc.raio, global.weight * 1000, global.phys_k(global.hp, _pc.raio, gear_ratios[0]), _pc.eficiencia, global.phys_mu(global.car_data[global.vehicles_array].pneu, global.heat_tire), _pc.share);",
+    false);
+
+// 3) _gear_resistance sai da cadeia (relacao real ja entrou na base)
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "_acceleration = _base_acceleration * _engine_multiplier * _gear_resistance * _speed_resistance * _weight_penalty * _low_speed_penalty;",
+    "_acceleration = _base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty;",
+    false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "_acceleration = (_base_acceleration * _engine_multiplier * _gear_resistance * _speed_resistance * _weight_penalty * _low_speed_penalty) / _vezes;",
+    "_acceleration = (_base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty) / _vezes;",
+    false);
+
+// 4) inercia: gira livre em neutro ou com a embreagem pisada
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "global.rpm = clamp(global.rpm, global.car_data[global.vehicles_array].minrpm, global.car_data[global.vehicles_array].rpm);",
+    "global.rpm = clamp(global.rpm, global.car_data[global.vehicles_array].minrpm, global.car_data[global.vehicles_array].rpm); if (global.engine == 1 && key_up && (global.gear == 0 || key_clutch)) {{ global.rpm = clamp(global.rpm + global.phys_rev(global.torque, _camshaft_response, global.dt), global.car_data[global.vehicles_array].minrpm, global.car_data[global.vehicles_array].rpm); }}",
+    false);
+
+// 5) IAs: mesma base fisica
+g.QueueFindReplace("gml_Object_obj_ia_car_Step_0",
+    "var _base_acceleration = (torque * hp) / (weight * 750);",
+    "var _base_acceleration = global.phys_base(torque, gear_ratios[max(0, gear - 1)], 0.31, weight * 1000, global.phys_k(hp, 0.31, gear_ratios[0]), 0.90, global.phys_mu(pneu, temp), 1.0);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Step_0",
+    "var _base_acceleration = (torque * hp) / (weight * 750);",
+    "var _base_acceleration = global.phys_base(torque, gear_ratios[max(0, gear - 1)], 0.31, weight * 1000, global.phys_k(hp, 0.31, gear_ratios[0]), 0.90, global.phys_mu(pneu, temp), 1.0);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_opponent_Step_0",
+    "var _base_acceleration = (torque * hp) / (weight * 750);",
+    "var _base_acceleration = global.phys_base(torque, gear_ratios[max(0, gear - 1)], 0.31, weight * 1000, global.phys_k(hp, 0.31, gear_ratios[0]), 0.90, global.phys_mu(pneu, temp), 1.0);",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0",
+    "var _base_acceleration = (torque * hp) / (weight * 750);",
+    "var _base_acceleration = global.phys_base(torque, gear_ratios[max(0, gear - 1)], 0.31, weight * 1000, global.phys_k(hp, 0.31, gear_ratios[0]), 0.90, global.phys_mu(pneu, temp), 1.0);",
+    false);
+
+// 6) IAs: fora o proxy de relacao
+g.QueueFindReplace("gml_Object_obj_ia_car_Step_0",
+    "_acceleration = _base_acceleration * _engine_multiplier * _gear_resistance * _speed_resistance * _weight_penalty * _low_speed_penalty;",
+    "_acceleration = _base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty;",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Step_0",
+    "_acceleration = _base_acceleration * _engine_multiplier * _gear_resistance * _speed_resistance * _weight_penalty * _low_speed_penalty;",
+    "_acceleration = _base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty;",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_opponent_Step_0",
+    "_acceleration = (_base_acceleration * _engine_multiplier * _gear_resistance * _speed_resistance * _weight_penalty * _low_speed_penalty) + _others_aderencia;",
+    "_acceleration = (_base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty) + _others_aderencia;",
+    false);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0",
+    "_acceleration = (_base_acceleration * _engine_multiplier * _gear_resistance * _speed_resistance * _weight_penalty * _low_speed_penalty) + _others_aderencia;",
+    "_acceleration = (_base_acceleration * _engine_multiplier * _speed_resistance * _weight_penalty * _low_speed_penalty) + _others_aderencia;",
     false);
 
 g.QueueAppend("gml_Object_obj_player_Step_0", {csx_str(GML_STEP_DANO)});

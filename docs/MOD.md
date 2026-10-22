@@ -228,6 +228,40 @@ O que mudou de lugar:
 - `_max_acc = 12` para aspirados com mais de 5 peças foi removido — instalar peça não
   derruba mais o teto de aceleração.
 
+### Trem de força (RoR)
+
+A aceleração deixou de sair de `(torque·hp)/(peso·750)` e passou a sair de força na roda:
+
+```gml
+F = T · gear_ratios[gear-1] · eficiência / raio        // N
+F = min(F, μ · m · g · share)                          // limite de aderência
+base = (F / m) · k
+```
+
+com `m = weight * 1000` (**`weight` está em toneladas**) e
+
+```gml
+k = hp · raio · 1000 / (750 · gear1 · 0.90)
+```
+
+`k` usa o **hp corrente** e a eficiência de referência 0.90, o que faz a 1ª marcha
+reproduzir exatamente a fórmula antiga (medido: `base_nova = base_antiga = 14,87`,
+razão 1,00) e, ao mesmo tempo, deixa `eficiencia` e `raio` com efeito real quando mudados.
+
+Consequências:
+
+- `_gear_resistance` (1 / 0.4 / 0.25 / …) saiu da cadeia: quem multiplica agora é a relação
+  real de cada marcha, inclusive as editadas no câmbio da garagem.
+- `μ` vem de `phys_mu(pneu, heat_tire)`: composto (rua 0,92 / sport 1,05 / slick 1,25 /
+  off-road 0,78) e temperatura (penalidade de até −40% fora da faixa).
+- O excedente de força vira `global.phys_slip` (patinação) em vez de acelerar o carro.
+- Embreagem: `phys_clutch_cap` / `phys_clutch` prontos, **desligados** por padrão
+  (`phys_cfg.embreagem = 0`).
+- Inércia: em neutro ou com a embreagem pisada o motor gira livre
+  (`phys_rev`, `phys_cfg.inercia = 0.15`), modulado por `_camshaft_response` — a variável
+  do comando que era escrita e nunca lida.
+- NPCs usam as mesmas funções com suas variáveis de instância.
+
 ## 5. Carburador: circuitos novos
 
 O jogo já modela `gicle`, `gicle_2nd` (segundo corpo) e oito tipos de
@@ -378,13 +412,14 @@ Config antiga (`dist_cfg` sem `ver`) migra uma vez: `ganho` sobe de 50 para 100.
 ## 10. Verificação
 
 `mcml-fixer --mod-check` abre o `game.unx` com o UTMT e procura marcadores no
-decompilado. Os 20 atuais:
+decompilado. Os 24 atuais:
 
 ```
 versao=v2.1-fisica  item  limites  dano  potencia  ui
 loja  shop_tile  shop_preco  shop_entrega  shop_instala
 carb  carb_hook  torque  potencia_real  pot_npc
 motor_upg  motor_hook  cabecote  maxacc
+phys_base  phys_gear  phys_npc  phys_inercia
 ```
 
 `carb` confere as funções `mod_carb_cfg`/`mod_carb_desvio`; `carb_hook` confere
