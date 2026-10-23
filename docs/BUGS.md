@@ -601,3 +601,39 @@ de volta para 400, dando a impressão de "limitador em 400" com o motor sobrando
 
 **Correção (3.0.2):** os quatro usam `global.cambio_vmax`. Provas: dump dos dois objetos
 de colisão do jogador sem `, 400)` (`verify_cambio.py` → `sem_teto_400_colisao`, 20/20).
+
+## BUG 25 — a "parede" de 400 km/h era o arrasto em degraus
+
+O `obj_player_Step_0` multiplicava o arrasto físico por uma tabela de faixas:
+
+```gml
+else if (global.kmh >= 120 && global.kmh < 160) _fator_velocidade = 1.5;
+else if (global.kmh >= 160 && global.kmh < 200) _fator_velocidade = 1.75;
+else if (global.kmh >= 200 && global.kmh < 250) _fator_velocidade = 2;
+else if (global.kmh >= 250 && global.kmh < 300) _fator_velocidade = 2.5;   // era o degrau
+else if (global.kmh >= 300)                     _fator_velocidade = 3.2;
+```
+
+Cada degrau é uma descontinuidade: ao cruzar o limite o arrasto sobe de uma vez e
+empurra o carro de volta. Com o degrau em 300 o carro parava em ~300; na 2.8.0 ele foi
+movido para 400 "para corrigir o buraco" — e o carro passou a parar em 400.
+
+Prova medida pela sonda (carro do usuário, 6ª a 1.20, torque 1202):
+
+```
+kmh=399 ... drag=0.99 fv=2.50 acc=21
+kmh=400 ... drag=1.27 fv=3.20 acc=21     <- cruzou o degrau
+kmh=400 ... drag=0.99 fv=2.50 acc=21     <- voltou
+```
+
+`fv` alternando 2.50/3.20 é o carro vibrando em cima do degrau: o empuxo dá ~6 km/h/s e o
+arrasto tira 5,9 abaixo do degrau e 7,6 acima.
+
+**Correção (3.1.0):** a tabela inteira acima de 120 km/h foi removida — sobra só o arrasto
+físico (`0,5·ρ·cx·A·v²`). Também saiu `_desacel_arrasto *= _mod_multiplier`, que dava até
+**1,9× mais arrasto para carro modificado** (punição por tunar escondida no arrasto).
+Teto padrão do câmbio subiu de 500 para 1000 (`[cambio] vmax`).
+
+**Consequência:** o topo passa a ser o **corte de giro**, não o arrasto. Com 8ª 0,70 e
+corte 8500: 728 km/h. Com 6ª 1,20: 425 km/h — era onde o usuário estava (a sonda mostrou
+`gear=6/8` a 400 km/h, ou seja, o carro já estava a 94 % do corte naquela marcha).

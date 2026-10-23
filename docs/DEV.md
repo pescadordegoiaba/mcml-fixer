@@ -127,8 +127,8 @@ TOPO kmh=400 rpm=4670 gear=8/8 r=0.7 rpm_roda=4667 corte=0 acc=21 drag=1.17 fv=3
 | `acc` | aceleração aplicada (km/h por frame antes do lerp) |
 | `drag` | desaceleração por arrasto naquele instante |
 | `corte` | 1 = corte de giro zerando o torque |
-| `fv` | multiplicador de arrasto da faixa de velocidade (2,5 entre 250–400; 3,2 acima) |
-| `vmax` | teto do câmbio em uso (500 por padrão) |
+| `fv` | multiplicador de arrasto (1 desde a 3.1.0; antes ia a 3,2 acima de 400) |
+| `vmax` | teto do câmbio em uso (1000 por padrão) |
 | `rpm_roda` | rpm implicado pela velocidade na marcha atual |
 
 Se `acc` estiver alto e o carro não passar, o limite é um clamp; se `acc` estiver em 0,

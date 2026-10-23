@@ -1055,7 +1055,7 @@ global.cambio_rel_max = 5.10;
 global.cambio_rel_ref = 3.73;
 global.cambio_passo = 0.01;
 global.cambio_limite_pct = 0.70;
-global.cambio_vmax = 500;
+global.cambio_vmax = 1000;
 global.cambio_custo = 775;
 
 global.cambio_cfg = function() {
@@ -1858,16 +1858,34 @@ if (global.kmh > global.cambio_vmax)
 }""")
 VM2_OLD = _cq("global.kmh = clamp(global.kmh, 0, 400);")
 VM2_NEW = _cq("global.kmh = clamp(global.kmh, 0, global.cambio_vmax);")
-VM4_OLD = _cq("else if (global.kmh >= 250 && global.kmh < 300)")
-VM4_NEW = _cq("else if (global.kmh >= 250 && global.kmh < 400)")
-VM3_OLD = _cq("""else if (global.kmh >= 300)
+# arrasto: a cadeia de multiplicadores por faixa (1.5 / 1.75 / 2 / 2.5 / 3.2)
+# virava uma parede em cada degrau - 300 antes, 400 depois. Sai inteira: o arrasto
+# fica so o fisico (0.5*rho*cx*A*v^2).
+FATOR_OLD = _cq("""    else if (global.kmh >= 120 && global.kmh < 160)
+    {
+        _fator_velocidade = 1.5;
+    }
+    else if (global.kmh >= 160 && global.kmh < 200)
+    {
+        _fator_velocidade = 1.75;
+    }
+    else if (global.kmh >= 200 && global.kmh < 250)
+    {
+        _fator_velocidade = 2;
+    }
+    else if (global.kmh >= 250 && global.kmh < 300)
+    {
+        _fator_velocidade = 2.5;
+    }
+    else if (global.kmh >= 300)
     {
         _fator_velocidade = 3.2;
     }""")
-VM3_NEW = _cq("""else if (global.kmh >= 400)
-    {
-        _fator_velocidade = 3.2;
-    }""")
+FATOR_NEW = _cq("")
+
+# punicao por tunar no arrasto: carro modificado levava ate 1.9x mais arrasto
+MODMULT_OLD = _cq("_desacel_arrasto *= _mod_multiplier;")
+MODMULT_NEW = _cq("")
 # ===================================================================
 
 PT_UP_MAN_OLD = _cq("""if (key_next && global.gear < max_gears)
@@ -2141,8 +2159,8 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_COST_OLD}", "{REL_COST
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_DBG_OLD}", "{REL_DBG_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM1_OLD}", "{VM1_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM2_OLD}", "{VM2_NEW}", true);
-g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM3_OLD}", "{VM3_NEW}", false);
-g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM4_OLD}", "{VM4_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{FATOR_OLD}", "{FATOR_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{MODMULT_OLD}", "{MODMULT_NEW}", false);
 // ===================================================================
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----

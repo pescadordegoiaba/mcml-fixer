@@ -78,6 +78,11 @@ ck("flag_edicao_preservada", "_car.cambio_mod = 0" not in _ini)
 ck("create_sem_escrita_direta",
    "gear_ratios[i] =" not in create and "gear_ratios[_ri]" not in create)
 
+
+ck("sem_fator_velocidade_alto", "_fator_velocidade = 3.2" not in step and "_fator_velocidade = 2.5" not in step)
+ck("sem_punicao_arrasto", "_desacel_arrasto *= _mod_multiplier" not in step)
+ck("vmax_configuravel", "global.cambio_vmax" in init and "cambio_vmax = ini_read_real" in init)
+
 falhas = [c for c in checks if not c[1]]
 for nome, ok, det in checks:
     print(("OK    " if ok else "FALHA ") + nome + (f"  {det}" if det else ""))

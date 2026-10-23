@@ -1065,7 +1065,7 @@ global.cambio_rel_max = 5.10;
 global.cambio_rel_ref = 3.73;
 global.cambio_passo = 0.01;
 global.cambio_limite_pct = 0.70;
-global.cambio_vmax = 500;
+global.cambio_vmax = 1000;
 global.cambio_custo = 775;
 
 global.cambio_cfg = function() {
@@ -1772,8 +1772,8 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "draw_text(_notebook_x + 80,
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "draw_text_transformed(_notebook_x, _notebook_y + 110, t + string(global.car_data[global.vehicles_array].gears_mod), 1, 1, 0);", "draw_text_transformed(_notebook_x, _notebook_y + 200, t + string(global.car_data[global.vehicles_array].gears_mod) + \"  |  \" + global.cambio_txt_rel() + \": \" + string(global.car_data[global.vehicles_array].relacao_final), 1, 1, 0);", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (_gearlimit > 400)\n{\n    _gearlimit = 400;\n}\nif (global.kmh > 400)\n{\n    global.kmh = 400;\n}", "if (_gearlimit > global.cambio_vmax)\n{\n    _gearlimit = global.cambio_vmax;\n}\nif (global.kmh > global.cambio_vmax)\n{\n    global.kmh = global.cambio_vmax;\n}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh = clamp(global.kmh, 0, 400);", "global.kmh = clamp(global.kmh, 0, global.cambio_vmax);", true);
-g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 300)\n    {\n        _fator_velocidade = 3.2;\n    }", "else if (global.kmh >= 400)\n    {\n        _fator_velocidade = 3.2;\n    }", false);
-g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 250 && global.kmh < 300)", "else if (global.kmh >= 250 && global.kmh < 400)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "    else if (global.kmh >= 120 && global.kmh < 160)\n    {\n        _fator_velocidade = 1.5;\n    }\n    else if (global.kmh >= 160 && global.kmh < 200)\n    {\n        _fator_velocidade = 1.75;\n    }\n    else if (global.kmh >= 200 && global.kmh < 250)\n    {\n        _fator_velocidade = 2;\n    }\n    else if (global.kmh >= 250 && global.kmh < 300)\n    {\n        _fator_velocidade = 2.5;\n    }\n    else if (global.kmh >= 300)\n    {\n        _fator_velocidade = 3.2;\n    }", "", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_desacel_arrasto *= _mod_multiplier;", "", false);
 // ===================================================================
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
