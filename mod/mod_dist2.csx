@@ -1367,6 +1367,25 @@ global.cash_guard();
 // desenha so no Draw GUI: fica acima do passe CRT, sem piscar
 global.mod_dist_ui();
 
+// telemetria do cambio: marcha, giro, relacao total e topo teorico
+if (instance_exists(obj_player) && global.kmh > 5) {
+    var _g = global.gear;
+    var _rr = global.pt_ratio(_g);
+    var _topo = 0;
+    if (_rr > 0) _topo = ((global.car_data[global.vehicles_array].rpm / _rr) * 60) / 1000;
+    var _txt = ""G"" + string(_g) + ""/"" + string(obj_player.max_gears)
+        + ""   "" + string(round(global.rpm)) + "" rpm""
+        + ""   rel "" + string(round(_rr * 100) / 100)
+        + ""   topo "" + string(round(_topo))
+        + ""   "" + string(round(global.kmh)) + "" km/h"";
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    draw_set_alpha(0.8);
+    draw_set_color(c_white);
+    draw_text_transformed(12, 12, _txt, 0.6, 0.6, 0);
+    draw_set_alpha(1);
+}
+
 // telemetria do noguintech (item comprado) + placa + FIPE
 if (variable_global_exists(""car_data"") && is_array(global.car_data)
     && global.vehicles_array >= 0 && global.vehicles_array < array_length(global.car_data)) {
