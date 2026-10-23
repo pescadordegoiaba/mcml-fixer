@@ -47,7 +47,7 @@ Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
 
 ```bash
 mcml-fixer --mod-install                 # aplica (backup automatico)
-mcml-fixer --mod-check                   # 58 marcadores dentro do decompilado
+mcml-fixer --mod-check                   # 63 marcadores dentro do decompilado
 mcml-fixer --mod-status                  # estado + caminho do ini
 mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
 mcml-fixer --mod-uninstall               # restaura o backup

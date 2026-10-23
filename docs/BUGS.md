@@ -513,3 +513,43 @@ conserta a busca, mas **não** faz o câmbio antigo voltar ao inventário (isso 
 implementado à parte).
 
 **Teste:** com `car.cambio = 3`, a função devolve `manual_6m` (antes: vazio).
+
+## BUG 19 — confirmar o câmbio sem dinheiro fechava o diálogo sem avisar
+
+`05221_gml_Object_obj_noguiin_Draw_0.gml:8267` (teclado) e `:8315` (mouse):
+`if (global.cash >= _custo_cambio) { ...grava... } else { global.tiao_confirmacao_cambio = 0; }`.
+Uma caixa completa custa 775 × 9 = **$6.975**; sem saldo nada era gravado e nada era
+dito. O jogador acreditava ter alterado.
+
+**Correção (3.0.0):** `global.cg_confirmar()` avisa na tela (`FALTA DINHEIRO`), grava a
+recusa em `cambio_save.txt` e existe `[dev] cambio_gratis=1` para testar sem saldo.
+
+## BUG 20 — `nan` no `gears_mod` por divisão sem guarda
+
+O patch 2.7 gravava `gears_mod[i] = temp * rel_ref / gear_rel_original`, e
+`gear_rel_original` só existia se o bloco de inicialização do caderno tivesse rodado.
+Com valor `0`/`undefined`, a divisão produzia `nan` → `gear_ratios` inválido → o carro
+andava como se nada tivesse mudado.
+
+**Correção (3.0.0):** não existe mais divisão; `gears_mod` guarda a razão efetiva e
+todo número passa por `global.cg_num` (rejeita `nan`, `inf` e `undefined`).
+
+## BUG 21 — `gears_mod` compartilhado com `gear_ratios`
+
+`05317:702` fazia `gear_ratios = global.car_data[...].gears_mod`; o patch da relação
+final multiplicava `gear_ratios` **no lugar**. Se a atribuição compartilhasse o array,
+o save era multiplicado a cada criação do player (a cada troca de sala).
+
+**Correção (3.0.0):** `cg_init_car` monta arrays novos (`array_create`) e nunca
+devolve `car.gears_mod` por referência. Teste `clone` do `cg_test` cobre isso.
+
+## BUG 22 — `cg_migrado` lido antes de existir (crash ao entrar na rua)
+
+`global.cg_migrado` era lido em `cg_init_car` sem inicialização. O jogo só quebrava ao
+**criar o player** (entrar na rua), não no boot — o `--mod-check` e o boot passavam.
+
+**Correção (3.0.0):** `global.cg_migrado = 0;` no `GML_INIT`. Descoberto pelo harness
+`mod/cg_create_test.csx`, que instancia `obj_player` e roda o Create de verdade.
+
+**Lição:** ler campo opcional de struct (`car.cg_versao`, `car.cambio_mod`) sem
+`variable_struct_exists` derruba o runner. Use sempre `global.cg_get(struct, chave, padrao)`.

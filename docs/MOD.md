@@ -468,6 +468,38 @@ onde `empuxo = arrasto`; com a 8ª em 0,4 e relação 2,8 a razão total fica 0,
 motor cai a ~1650 rpm em 330 km/h e não sobe mais — só a curva cheia dá o empuxo
 que falta. Para 400+ km/h a razão total precisa ficar perto de 1,1–1,3.
 
+## 6c. Câmbio: camada única `cg` (v3)
+
+Toda a relação de marchas passa por cinco funções em `gen_mod.py` (`GML_INIT`):
+
+| Função | Papel |
+|---|---|
+| `global.cg_validar` | regras duras: nº de marchas, valor > 0, janela ±70 %, relação final 2,60–5,10 |
+| `global.cg_avisos` | **não bloqueia**: devolve texto de caixa irreal (marcha fora de ordem, salto > 60 %, quase igual, topo absurdo) para pintar em amarelo |
+| `global.cg_aplicar` | grava com `CloneArray`, confere lendo de volta e faz **rollback** se não bater |
+| `global.cg_conferir` | compara `car.gears_mod`/`relacao_final` com o que se quis gravar |
+| `global.cg_init_car` | **único** lugar que escreve `gear_ratios`, `original_ratios` e `max_gears` |
+
+`global.cg_confirmar(custo)` é a porta de entrada do caderno do Tião (teclado e mouse
+chamam a mesma função): valida → cobra → aplica → confere → `SaveAllCars()`/`SaveGame()`
+→ grava snapshot em `cambio_save.txt`.
+
+**O que mudou em relação à 2.7**
+
+- `car.gears_mod` guarda a **razão efetiva** (o que a física usa). Fim da divisão por
+  `gear_rel_original`, que produzia `nan`.
+- `gear_ratios` recebe um **array novo** a cada criação: mexer na relação final não
+  corrompe mais o save.
+- Sem saldo o confirm **avisa** (`FALTA DINHEIRO`) em vez de fechar calado.
+- Saves do esquema antigo (sem `car.cg_versao`) são migrados: `cambio_mod = 0` e
+  `gears_mod = []` (volta ao de fábrica), com linha `MIGRADO` no log.
+
+**Custo:** `global.cambio_custo` (775) × nº de marchas alteradas + 1 se a relação
+final mudou. Caixa completa de 8 marchas = $6.975.
+
+**Telemetria** (canto superior esquerdo, andando):
+`G3/8  4200 rpm  rel 4.90  topo 104  120 km/h  mod1 gm8`.
+
 ## 7. Punições por tunar: removidas
 
 

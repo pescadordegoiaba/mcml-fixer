@@ -1101,6 +1101,253 @@ global.cambio_txt_rel = function() {
     }
 };
 
+
+// ================= CAMBIO: camada unica (cg v3) =================
+global.cg_versao = 3;
+global.cg_migrado = 0;
+
+global.cg_num = function(_v, _def) {
+    if (!is_real(_v)) return _def;
+    if (_v != _v) return _def;
+    if (abs(_v) > 100000) return _def;
+    return _v;
+};
+
+global.cg_get = function(_st, _k, _def) {
+    if (!is_struct(_st)) return _def;
+    if (!variable_struct_exists(_st, _k)) return _def;
+    return variable_struct_get(_st, _k);
+};
+
+global.cg_ref = function() { return global.cambio_rel_ref; };
+
+global.cg_rel = function(_car) {
+    var _r = global.cg_num(global.cg_get(_car, ""relacao_final"", global.cambio_rel_ref), global.cambio_rel_ref);
+    return clamp(_r, global.cambio_rel_min, global.cambio_rel_max);
+};
+
+global.cg_base = function(_car, _i) {
+    var _g = global.cg_get(_car, ""gears_mod"", -1);
+    if (!is_array(_g)) return -1;
+    if (_i < 0 || _i >= array_length(_g)) return -1;
+    var _v = global.cg_num(_g[_i], -1);
+    if (_v <= 0) return -1;
+    return _v;
+};
+
+global.cg_ratio = function(_car, _i) {
+    var _b = global.cg_base(_car, _i);
+    if (_b < 0) return -1;
+    return _b;
+};
+
+global.cg_topo = function(_car, _cand, _i) {
+    var _r = global.cg_num(_cand[_i], 0);
+    if (_r <= 0) return 0;
+    var _corte = global.cg_num(global.cg_get(_car, ""rpm"", 8500), 8500);
+    return ((_corte / _r) * 60) / 1000;
+};
+
+// """" = ok, senao a descricao do problema
+global.cg_validar = function(_car, _cand, _rel, _fab) {
+    var _n = array_length(_fab);
+    if (!is_array(_cand)) return ""marchas nao carregadas"";
+    if (array_length(_cand) != _n) return ""esperava "" + string(_n) + "" marchas e veio "" + string(array_length(_cand));
+    for (var i = 0; i < _n; i++) {
+        var _v = global.cg_num(_cand[i], -1);
+        if (_v < 0.20) return ""marcha "" + string(i + 1) + "" invalida"";
+        if (_v > 15.0) return ""marcha "" + string(i + 1) + "" longa demais"";
+        if (abs(_v - _fab[i]) > 0.70 * _fab[i]) {
+            return ""marcha "" + string(i + 1) + "" fora de +-70% de "" + string(round(_fab[i] * 100) / 100);
+        }
+    }
+    var _r = global.cg_num(_rel, -1);
+    if (_r < global.cambio_rel_min || _r > global.cambio_rel_max) {
+        return ""relacao final fora de "" + string(global.cambio_rel_min) + "" a "" + string(global.cambio_rel_max);
+    }
+    return """";
+};
+
+// caixa irreal NAO bloqueia: devolve aviso para pintar de amarelo
+global.cg_avisos = function(_car, _cand, _rel, _fab) {
+    var _n = array_length(_fab);
+    var _m = """";
+    for (var i = 1; i < _n; i++) {
+        var _a = global.cg_num(_cand[i - 1], 0);
+        var _b = global.cg_num(_cand[i], 0);
+        if (_b >= _a) _m += ""marcha "" + string(i + 1) + "" nao e mais longa que a "" + string(i) + "". "";
+        if (_a > 0 && _b > 0) {
+            var _salto = 1 - (_b / _a);
+            if (_salto < 0.08) _m += ""marcha "" + string(i + 1) + "" quase igual a "" + string(i) + "". "";
+            if (_salto > 0.60) _m += ""salto enorme da "" + string(i) + "" para a "" + string(i + 1) + "". "";
+        }
+    }
+    var _topo = global.cg_topo(_car, _cand, _n - 1);
+    if (_topo > global.cambio_vmax * 1.5) _m += ""ultima marcha longa demais (topo "" + string(round(_topo)) + "" km/h). "";
+    if (_topo > 0 && _topo < 60) _m += ""ultima marcha curta demais (topo "" + string(round(_topo)) + "" km/h). "";
+    return _m;
+};
+
+global.cg_conferir = function(_car, _cand, _rel) {
+    if (global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0) != 1) return false;
+    var _g = global.cg_get(_car, ""gears_mod"", -1);
+    if (!is_array(_g)) return false;
+    if (array_length(_g) != array_length(_cand)) return false;
+    for (var i = 0; i < array_length(_cand); i++) {
+        if (abs(global.cg_num(_g[i], -999) - _cand[i]) > 0.0001) return false;
+    }
+    if (abs(global.cg_num(global.cg_get(_car, ""relacao_final"", -999), -999) - _rel) > 0.0001) return false;
+    return true;
+};
+
+// UNICO lugar que escreve gear_ratios / original_ratios / max_gears
+global.cg_init_car = function(_inst, _car, _fab) {
+    if (global.cg_num(global.cg_get(_car, ""cg_versao"", 0), 0) != global.cg_versao) {
+        if (global.cg_num(_car.cambio_mod, 0) == 1) {
+            _car.cambio_mod = 0;
+            _car.gears_mod = [];
+            if (global.cg_migrado != 1) {
+                global.cg_migrado = 1;
+                global.cg_diag(""MIGRADO cambio_mod zerado (esquema antigo)"");
+            }
+        }
+        _car.cg_versao = global.cg_versao;
+    }
+    var _n = array_length(_fab);
+    var _mult = global.cg_rel(_car) / global.cg_ref();
+    var _gm = global.cg_get(_car, ""gears_mod"", -1);
+    var _usar = (global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0) == 1)
+        && is_array(_gm) && array_length(_gm) == _n;
+    if (global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0) == 1 && !_usar) {
+        _car.cambio_mod = 0;
+        _car.gears_mod = [];
+    }
+    var _gr = array_create(_n);
+    var _or = array_create(_n);
+    for (var i = 0; i < _n; i++) {
+        _or[i] = _fab[i] * _mult;
+        var _b = _usar ? global.cg_base(_car, i) : -1;
+        _gr[i] = (_b > 0) ? _b : _or[i];
+    }
+    with (_inst) {
+        gear_ratios = _gr;
+        original_ratios = _or;
+        max_gears = _n;
+    }
+    return _n;
+};
+
+global.cg_aplicar = function(_inst, _car, _cand, _rel, _fab) {
+    var _erro = global.cg_validar(_car, _cand, _rel, _fab);
+    if (_erro != """") return _erro;
+    var _om = global.cg_get(_car, ""cambio_mod"", 0);
+    var _og = global.cg_get(_car, ""gears_mod"", -1);
+    var _orr = global.cg_get(_car, ""relacao_final"", global.cambio_rel_ref);
+    _car.cambio_mod = 1;
+    _car.gears_mod = CloneArray(_cand);
+    _car.relacao_final = _rel;
+    _car.cg_versao = global.cg_versao;
+    if (!global.cg_conferir(_car, _cand, _rel)) {
+        _car.cambio_mod = _om;
+        _car.gears_mod = _og;
+        _car.relacao_final = _orr;
+        global.cg_init_car(_inst, _car, _fab);
+        return ""verificacao pos-gravacao falhou (rollback)"";
+    }
+    global.cg_init_car(_inst, _car, _fab);
+    return """";
+};
+
+global.cg_resumo = function(_car) {
+    var _gm = global.cg_get(_car, ""gears_mod"", -1);
+    if (!is_array(_gm)) _gm = [];
+    var _s = ""CG|v="" + string(global.cg_versao)
+        + ""|mod="" + string(global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0))
+        + ""|rel="" + string(global.cg_rel(_car))
+        + ""|n="" + string(array_length(_gm));
+    for (var i = 0; i < array_length(_gm); i++) {
+        _s += ""|r"" + string(i) + ""="" + string(global.cg_num(_gm[i], -1));
+    }
+    return _s;
+};
+
+global.cg_diag = function(_s) {
+    var _f = file_text_open_append(""cambio_save.txt"");
+    if (_f == -1) return 0;
+    file_text_write_string(_f, _s);
+    file_text_writeln(_f);
+    file_text_close(_f);
+    return 1;
+};
+
+global.cambio_erro_t = 0;
+global.cambio_erro_txt = """";
+global.cambio_erro = function(_txt) {
+    global.cambio_erro_t = current_time;
+    global.cambio_erro_txt = _txt;
+};
+
+global.cambio_aviso_t = 0;
+global.cambio_aviso_txt = """";
+global.cg_avisar = function(_txt) {
+    global.cambio_aviso_t = current_time;
+    global.cambio_aviso_txt = _txt;
+};
+
+global.cambio_gratis = 0;
+global.cambio_pode_pagar = function(_custo) {
+    var _ok = (global.cash >= _custo) || (global.cambio_gratis == 1);
+    global.cg_diag((_ok ? ""PODE PAGAR"" : ""SEM DINHEIRO"")
+        + "" custo="" + string(floor(_custo)) + "" cash="" + string(floor(global.cash)));
+    return _ok;
+};
+
+global.cg_confirmar = function(_custo) {
+    var _car = global.car_data[global.vehicles_array];
+    var _inst = instance_find(obj_player, 0);
+    if (!instance_exists(_inst)) return ""sem player na cena"";
+    var _n = _inst.max_gears;
+    if (!variable_global_exists(""gear_temp_array"") || !is_array(global.gear_temp_array)) {
+        return ""marchas nao carregadas no caderno"";
+    }
+    if (array_length(global.gear_temp_array) != _n) {
+        return ""marchas nao carregadas no caderno"";
+    }
+    var _cand = array_create(_n);
+    for (var i = 0; i < _n; i++) _cand[i] = global.cg_num(global.gear_temp_array[i], -1);
+    var _rel = global.cg_rel(_car);
+    if (variable_global_exists(""gear_temp_rel"")) {
+        _rel = global.cg_num(global.gear_temp_rel, _rel);
+    }
+    var _fab = _inst.original_ratios;
+
+    var _erro = global.cg_validar(_car, _cand, _rel, _fab);
+    if (_erro != """") {
+        global.cambio_erro(_erro);
+        global.cg_diag(""RECUSADO "" + _erro);
+        return _erro;
+    }
+    var _av = global.cg_avisos(_car, _cand, _rel, _fab);
+    if (_av != """") global.cg_avisar(""CAMBIO IRREAL: "" + _av);
+
+    if (!global.cambio_pode_pagar(_custo)) {
+        global.cambio_erro(""FALTA DINHEIRO: $"" + string(floor(_custo - global.cash)));
+        return ""sem dinheiro"";
+    }
+    global.cash -= _custo;
+    _erro = global.cg_aplicar(_inst, _car, _cand, _rel, _fab);
+    if (_erro != """") {
+        global.cash += _custo;
+        global.cambio_erro(_erro);
+        global.cg_diag(""FALHOU "" + _erro);
+        return _erro;
+    }
+    SaveAllCars();
+    SaveGame();
+    global.cg_diag(""GRAVOU "" + global.cg_resumo(_car));
+    return """";
+};
+
 // ================= POWERTRAIN (base: Rigs of Rods Engine.cpp) =================
 // RoR: torque = max_torque * curva(rpm) * throttle ; clutch = clamp(slip * forca, +/-limite) ;
 // forca na roda = T * relacao / raio ; o corte de giro corta torque, nao a velocidade.
@@ -1196,6 +1443,7 @@ global.mod_dist_carregar = function() {
         global.mod_rev = ini_read_real(""mod"", ""rev"", 0);
         global.dev_cash = ini_read_real(""dev"", ""cash"", 0);
         global.dev_cash_modo = ini_read_real(""dev"", ""cash_modo"", 0);
+        global.cambio_gratis = ini_read_real(""dev"", ""cambio_gratis"", 0);
         ini_close();
     }
 };
@@ -1377,13 +1625,35 @@ if (instance_exists(obj_player) && global.kmh > 5) {
         + ""   "" + string(round(global.rpm)) + "" rpm""
         + ""   rel "" + string(round(_rr * 100) / 100)
         + ""   topo "" + string(round(_topo))
-        + ""   "" + string(round(global.kmh)) + "" km/h"";
+        + ""   "" + string(round(global.kmh)) + "" km/h""
+        + ""   mod"" + string(global.cg_num(global.car_data[global.vehicles_array].cambio_mod, 0))
+        + "" gm"" + string(array_length(global.car_data[global.vehicles_array].gears_mod));
     draw_set_halign(fa_left);
     draw_set_valign(fa_top);
     draw_set_alpha(0.8);
     draw_set_color(c_white);
     draw_text_transformed(12, 12, _txt, 0.6, 0.6, 0);
     draw_set_alpha(1);
+}
+
+// cambio: aviso amarelo (caixa irreal) e erro vermelho
+if (global.cambio_erro_t > 0 && current_time - global.cambio_erro_t < 3000) {
+    draw_set_halign(fa_center);
+    draw_set_valign(fa_top);
+    draw_set_alpha(0.95);
+    draw_set_color(c_red);
+    draw_text_transformed(display_get_gui_width() / 2, 84, global.cambio_erro_txt, 0.75, 0.75, 0);
+    draw_set_alpha(1);
+    draw_set_color(c_white);
+}
+if (global.cambio_aviso_t > 0 && current_time - global.cambio_aviso_t < 5000) {
+    draw_set_halign(fa_center);
+    draw_set_valign(fa_top);
+    draw_set_alpha(0.95);
+    draw_set_color(c_yellow);
+    draw_text_transformed(display_get_gui_width() / 2, 108, global.cambio_aviso_txt, 0.65, 0.65, 0);
+    draw_set_alpha(1);
+    draw_set_color(c_white);
 }
 
 // telemetria do noguintech (item comprado) + placa + FIPE
@@ -1422,7 +1692,7 @@ if (variable_global_exists(""car_data"") && is_array(global.car_data)
 // ---- CAMBIOS 7 E 8 MARCHAS ----
 // razoes: cambio 8 = 7 marchas, cambio 9 = 8 marchas. max_gears sai do array_length,
 // entao troca, automatico, HUD e IA (que copia as razoes do jogador) ja funcionam.
-g.QueueFindReplace("gml_Object_obj_player_Create_0", "max_gears = array_length(gear_ratios);", "if (global.car_data[global.vehicles_array].cambio == 8)\n{\n    gear_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];\n    original_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];\n}\nelse if (global.car_data[global.vehicles_array].cambio == 9)\n{\n    gear_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];\n    original_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];\n}\nmax_gears = array_length(gear_ratios);", false);
+g.QueueFindReplace("gml_Object_obj_player_Create_0", "if (global.car_data[global.vehicles_array].cambio == 1 || global.car_data[global.vehicles_array].cambio == 4)\n{\n    gear_ratios = [9, 6.1, 3.7, 2.1];\n    original_ratios = [9, 6.1, 3.7, 2.1];\n}\nelse if (global.car_data[global.vehicles_array].cambio == 2 || global.car_data[global.vehicles_array].cambio == 5)\n{\n    gear_ratios = [9, 6.1, 3.7, 2.5, 1.8];\n    original_ratios = [9, 6.1, 3.7, 2.5, 1.8];\n}\nelse if (global.car_data[global.vehicles_array].cambio == 3 || global.car_data[global.vehicles_array].cambio == 6 || global.car_data[global.vehicles_array].cambio == 7)\n{\n    gear_ratios = [9.35, 6, 3.6, 2.7, 2.1, 1.7];\n    original_ratios = [9.35, 6, 3.6, 2.7, 2.1, 1.7];\n}\nif (global.car_data[global.vehicles_array].cambio_mod == 1 && array_length(global.car_data[global.vehicles_array].gears_mod) > 0)\n{\n    gear_ratios = global.car_data[global.vehicles_array].gears_mod;\n}\nmax_gears = array_length(gear_ratios);", "var _cg_fab = [9.35, 6, 3.6, 2.7, 2.1, 1.7];\nif (global.car_data[global.vehicles_array].cambio == 1 || global.car_data[global.vehicles_array].cambio == 4) _cg_fab = [9, 6.1, 3.7, 2.1];\nelse if (global.car_data[global.vehicles_array].cambio == 2 || global.car_data[global.vehicles_array].cambio == 5) _cg_fab = [9, 6.1, 3.7, 2.5, 1.8];\nelse if (global.car_data[global.vehicles_array].cambio == 8) _cg_fab = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];\nelse if (global.car_data[global.vehicles_array].cambio == 9) _cg_fab = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];\nglobal.cg_init_car(self, global.car_data[global.vehicles_array], _cg_fab);", false);
 
 // nomes: 7 terminadores cobrem as 5 tabelas (case "cambio" indexado por cambio-1,
 // GetPartLevelsArray/2 e GetNamePartsVenture/2 indexados por nivel)
@@ -1465,8 +1735,9 @@ g.QueueFindReplace("gml_GlobalScript_Inventory", "_r(\"manual_8m\", \"Manual 8 M
 
 // ================= CAMBIO: relacao final + limites =================
 g.QueueFindReplace("gml_GlobalScript_EstruturaSalvamento", "data.gears_mod = [];", "data.gears_mod = [];\ndata.relacao_final = 3.73;", false);
-g.QueueFindReplace("gml_Object_obj_player_Create_0", "max_gears = array_length(gear_ratios);", "max_gears = array_length(gear_ratios);\nvar _rel_final = 1;\nif (variable_struct_exists(global.car_data[global.vehicles_array], \"relacao_final\")) {\n    var _rf_tmp = global.car_data[global.vehicles_array].relacao_final;\n    if (is_real(_rf_tmp) && _rf_tmp > 0) {\n        _rel_final = clamp(_rf_tmp, global.cambio_rel_min, global.cambio_rel_max) / global.cambio_rel_ref;\n    }\n}\nif (_rel_final != 1) {\n    for (var _ri = 0; _ri < max_gears; _ri++) {\n        gear_ratios[_ri] = gear_ratios[_ri] * _rel_final;\n        if (_ri < array_length(original_ratios)) {\n            original_ratios[_ri] = original_ratios[_ri] * _rel_final;\n        }\n    }\n}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                if (arg0 == 0)\n                {\n                    return 1;\n                }\n                else if (arg0 >= 4)\n                {\n                    return 0.2;\n                }\n                else\n                {\n                    return 0.5;\n                }", "                return global.cambio_limite_pct;", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                        if (global.cash >= _custo_cambio)\n                        {\n                            global.cash -= _custo_cambio;\n                            global.car_data[global.vehicles_array].cambio_mod = 1;\n                            global.car_data[global.vehicles_array].gears_mod = [];\n                            for (var i = 0; i < obj_player.max_gears; i++)\n                            {\n                                global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];\n                                obj_player.gear_ratios[i] = global.gear_temp_array[i];\n                            }\n                            global.tiao_confirmacao_cambio = 0;\n                            global.modificando_cambio = true;\n                            global.tempo_modificacao = 0;\n                            play_audio(snd_conserto_motor);\n                            global.gear_temp_array = -1;\n                        }\n                        else\n                        {\n                            global.tiao_confirmacao_cambio = 0;\n                        }", "                        if (global.cg_confirmar(_custo_cambio) == \"\")\n                        {\n                            global.tiao_confirmacao_cambio = 0;\n                            global.modificando_cambio = true;\n                            global.tempo_modificacao = 0;\n                            play_audio(snd_conserto_motor);\n                            global.gear_temp_array = -1;\n                        }\n                        else\n                        {\n                            global.tiao_confirmacao_cambio = 0;\n                        }", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                    if (global.cash >= _custo_cambio)\n                    {\n                        global.cash -= _custo_cambio;\n                        global.car_data[global.vehicles_array].cambio_mod = 1;\n                        global.car_data[global.vehicles_array].gears_mod = [];\n                        for (var i = 0; i < obj_player.max_gears; i++)\n                        {\n                            global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];\n                            obj_player.gear_ratios[i] = global.gear_temp_array[i];\n                        }\n                        global.tiao_confirmacao_cambio = 0;\n                        global.modificando_cambio = true;\n                        global.tempo_modificacao = 0;\n                        play_audio(snd_conserto_motor);\n                        global.gear_temp_array = -1;\n                    }\n                    else\n                    {\n                        global.tiao_confirmacao_cambio = 0;\n                    }", "                    if (global.cg_confirmar(_custo_cambio) == \"\")\n                    {\n                        global.tiao_confirmacao_cambio = 0;\n                        global.modificando_cambio = true;\n                        global.tempo_modificacao = 0;\n                        play_audio(snd_conserto_motor);\n                        global.gear_temp_array = -1;\n                    }\n                    else\n                    {\n                        global.tiao_confirmacao_cambio = 0;\n                    }", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                var _limite = get_limite_marcha(i, obj_player.max_gears);\n                var _valor_min = _gear_original[i] - _limite;\n                var _valor_max = _gear_original[i] + _limite;", "                var _limite = max(0.3, _gear_original[i] * get_limite_marcha(i, obj_player.max_gears));\n                var _valor_min = max(0.3, _gear_original[i] - _limite);\n                var _valor_max = _gear_original[i] + _limite;", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                global.gear_selecionada = 0;\n                global.gear_editando = false;\n                global.gear_area_botoes = false;\n                global.gear_botao_selecionado = 0;\n            }", "                global.gear_selecionada = 0;\n                global.gear_editando = false;\n                global.gear_area_botoes = false;\n                global.gear_botao_selecionado = 0;\n                global.gear_temp_rel = global.cambio_rel_valor();\n                global.gear_rel_original = global.gear_temp_rel;\n            }", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "            var _custo_cambio = 775 * _marchas_modificadas;", "            if (abs(global.gear_temp_rel - global.gear_rel_original) > 0.005)\n            {\n                _marchas_modificadas++;\n            }\n            var _custo_cambio = global.cambio_custo * _marchas_modificadas;", false);
@@ -1474,9 +1745,6 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "global.gear_selecionada = m
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                    draw_set_halign(fa_center);\n                    draw_set_color(c_yellow);\n                    draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);\n                }\n            }\n            draw_set_halign(fa_left);\n            draw_set_color(c_white);\n            draw_text(_notebook_x - 290, _notebook_y + 150, txt_custo);", "                    draw_set_halign(fa_center);\n                    draw_set_color(c_yellow);\n                    draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);\n                }\n            }\n            var _rel_idx = obj_player.max_gears;\n            var _y_rel = _start_y + (obj_player.max_gears * _spacing) + 8;\n            var _rel_min = global.cambio_cfg().rel_min;\n            var _rel_max = global.cambio_cfg().rel_max;\n            var _rel_cor = (!global.gear_area_botoes && global.gear_selecionada == _rel_idx && !global.gear_editando) ? global.red : 16777215;\n            if (global.gear_selecionada == _rel_idx && global.gear_editando) _rel_cor = global.gold;\n            draw_set_halign(fa_left);\n            draw_set_color(_rel_cor);\n            draw_set_font(NotoSans);\n            draw_text(_marcha_x, _y_rel, global.cambio_txt_rel() + \":\");\n            draw_set_color(c_gray);\n            draw_text(_notebook_x - 180, _y_rel, string_format(global.gear_rel_original, 2, 2));\n            if (abs(global.gear_temp_rel - global.gear_rel_original) > 0.005)\n            {\n                draw_set_color(c_yellow);\n                draw_text(_notebook_x - 130, _y_rel, \">\");\n            }\n            draw_set_color((abs(global.gear_temp_rel - global.gear_rel_original) > 0.005) ? 65280 : 16777215);\n            draw_text(_notebook_x - 100, _y_rel, string_format(global.gear_temp_rel, 2, 2));\n            var _rbar_x = _notebook_x + 50;\n            draw_set_color(c_dkgray);\n            draw_roundrect(_rbar_x, _y_rel - 6, _rbar_x + 200, _y_rel + 6, false);\n            var _rpct = (global.gear_temp_rel - _rel_min) / (_rel_max - _rel_min);\n            draw_set_color(_rel_cor);\n            draw_circle(_rbar_x + (_rpct * 200), _y_rel, 8, false);\n            draw_set_color(c_black);\n            draw_circle(_rbar_x + (_rpct * 200), _y_rel, 8, true);\n            var _rhover = point_in_rectangle(mouse_x, mouse_y, _rbar_x, _y_rel - 15, _rbar_x + 200, _y_rel + 15);\n            if (mouse_check_button_pressed(mb_left) && _rhover)\n            {\n                global.gear_selecionada = _rel_idx;\n                global.gear_editando = true;\n                global.gear_area_botoes = false;\n            }\n            if (global.gear_editando && global.gear_selecionada == _rel_idx && mouse_check_button(mb_left) && _rhover)\n            {\n                var _rn = _rel_min + (clamp((mouse_x - _rbar_x) / 200, 0, 1) * (_rel_max - _rel_min));\n                global.gear_temp_rel = round(_rn * 100) / 100;\n            }\n            if (global.gear_editando && global.gear_selecionada == _rel_idx)\n            {\n                if (keyboard_check_pressed(vk_left)) global.gear_temp_rel = max(global.gear_temp_rel - global.cambio_passo, _rel_min);\n                if (keyboard_check_pressed(vk_right)) global.gear_temp_rel = min(global.gear_temp_rel + global.cambio_passo, _rel_max);\n                draw_set_halign(fa_center);\n                draw_set_color(c_yellow);\n                draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);\n            }\n            draw_set_halign(fa_left);\n            draw_set_color(c_white);\n            draw_text(_notebook_x - 290, _notebook_y + 176, txt_custo);", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "draw_text(_notebook_x + 80, _notebook_y + 150, \"$\" + string(floor(_custo_cambio)));", "draw_text(_notebook_x + 80, _notebook_y + 176, \"$\" + string(floor(_custo_cambio)));", true);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "draw_text_transformed(_notebook_x, _notebook_y + 110, t + string(global.car_data[global.vehicles_array].gears_mod), 1, 1, 0);", "draw_text_transformed(_notebook_x, _notebook_y + 200, t + string(global.car_data[global.vehicles_array].gears_mod) + \"  |  \" + global.cambio_txt_rel() + \": \" + string(global.car_data[global.vehicles_array].relacao_final), 1, 1, 0);", false);
-g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];", "global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original;", true);
-g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "obj_player.gear_ratios[i] = global.gear_temp_array[i];", "obj_player.gear_ratios[i] = (global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original) * (global.gear_temp_rel / global.cambio_rel_ref);", true);
-g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "global.car_data[global.vehicles_array].cambio_mod = 1;", "global.car_data[global.vehicles_array].cambio_mod = 1;\nglobal.car_data[global.vehicles_array].relacao_final = global.gear_temp_rel;", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (_gearlimit > 400)\n{\n    _gearlimit = 400;\n}\nif (global.kmh > 400)\n{\n    global.kmh = 400;\n}", "if (_gearlimit > global.cambio_vmax)\n{\n    _gearlimit = global.cambio_vmax;\n}\nif (global.kmh > global.cambio_vmax)\n{\n    global.kmh = global.cambio_vmax;\n}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh = clamp(global.kmh, 0, 400);", "global.kmh = clamp(global.kmh, 0, global.cambio_vmax);", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 300)\n    {\n        _fator_velocidade = 3.2;\n    }", "else if (global.kmh >= 400)\n    {\n        _fator_velocidade = 3.2;\n    }", false);

@@ -1091,6 +1091,253 @@ global.cambio_txt_rel = function() {
     }
 };
 
+
+// ================= CAMBIO: camada unica (cg v3) =================
+global.cg_versao = 3;
+global.cg_migrado = 0;
+
+global.cg_num = function(_v, _def) {
+    if (!is_real(_v)) return _def;
+    if (_v != _v) return _def;
+    if (abs(_v) > 100000) return _def;
+    return _v;
+};
+
+global.cg_get = function(_st, _k, _def) {
+    if (!is_struct(_st)) return _def;
+    if (!variable_struct_exists(_st, _k)) return _def;
+    return variable_struct_get(_st, _k);
+};
+
+global.cg_ref = function() { return global.cambio_rel_ref; };
+
+global.cg_rel = function(_car) {
+    var _r = global.cg_num(global.cg_get(_car, "relacao_final", global.cambio_rel_ref), global.cambio_rel_ref);
+    return clamp(_r, global.cambio_rel_min, global.cambio_rel_max);
+};
+
+global.cg_base = function(_car, _i) {
+    var _g = global.cg_get(_car, "gears_mod", -1);
+    if (!is_array(_g)) return -1;
+    if (_i < 0 || _i >= array_length(_g)) return -1;
+    var _v = global.cg_num(_g[_i], -1);
+    if (_v <= 0) return -1;
+    return _v;
+};
+
+global.cg_ratio = function(_car, _i) {
+    var _b = global.cg_base(_car, _i);
+    if (_b < 0) return -1;
+    return _b;
+};
+
+global.cg_topo = function(_car, _cand, _i) {
+    var _r = global.cg_num(_cand[_i], 0);
+    if (_r <= 0) return 0;
+    var _corte = global.cg_num(global.cg_get(_car, "rpm", 8500), 8500);
+    return ((_corte / _r) * 60) / 1000;
+};
+
+// "" = ok, senao a descricao do problema
+global.cg_validar = function(_car, _cand, _rel, _fab) {
+    var _n = array_length(_fab);
+    if (!is_array(_cand)) return "marchas nao carregadas";
+    if (array_length(_cand) != _n) return "esperava " + string(_n) + " marchas e veio " + string(array_length(_cand));
+    for (var i = 0; i < _n; i++) {
+        var _v = global.cg_num(_cand[i], -1);
+        if (_v < 0.20) return "marcha " + string(i + 1) + " invalida";
+        if (_v > 15.0) return "marcha " + string(i + 1) + " longa demais";
+        if (abs(_v - _fab[i]) > 0.70 * _fab[i]) {
+            return "marcha " + string(i + 1) + " fora de +-70% de " + string(round(_fab[i] * 100) / 100);
+        }
+    }
+    var _r = global.cg_num(_rel, -1);
+    if (_r < global.cambio_rel_min || _r > global.cambio_rel_max) {
+        return "relacao final fora de " + string(global.cambio_rel_min) + " a " + string(global.cambio_rel_max);
+    }
+    return "";
+};
+
+// caixa irreal NAO bloqueia: devolve aviso para pintar de amarelo
+global.cg_avisos = function(_car, _cand, _rel, _fab) {
+    var _n = array_length(_fab);
+    var _m = "";
+    for (var i = 1; i < _n; i++) {
+        var _a = global.cg_num(_cand[i - 1], 0);
+        var _b = global.cg_num(_cand[i], 0);
+        if (_b >= _a) _m += "marcha " + string(i + 1) + " nao e mais longa que a " + string(i) + ". ";
+        if (_a > 0 && _b > 0) {
+            var _salto = 1 - (_b / _a);
+            if (_salto < 0.08) _m += "marcha " + string(i + 1) + " quase igual a " + string(i) + ". ";
+            if (_salto > 0.60) _m += "salto enorme da " + string(i) + " para a " + string(i + 1) + ". ";
+        }
+    }
+    var _topo = global.cg_topo(_car, _cand, _n - 1);
+    if (_topo > global.cambio_vmax * 1.5) _m += "ultima marcha longa demais (topo " + string(round(_topo)) + " km/h). ";
+    if (_topo > 0 && _topo < 60) _m += "ultima marcha curta demais (topo " + string(round(_topo)) + " km/h). ";
+    return _m;
+};
+
+global.cg_conferir = function(_car, _cand, _rel) {
+    if (global.cg_num(global.cg_get(_car, "cambio_mod", 0), 0) != 1) return false;
+    var _g = global.cg_get(_car, "gears_mod", -1);
+    if (!is_array(_g)) return false;
+    if (array_length(_g) != array_length(_cand)) return false;
+    for (var i = 0; i < array_length(_cand); i++) {
+        if (abs(global.cg_num(_g[i], -999) - _cand[i]) > 0.0001) return false;
+    }
+    if (abs(global.cg_num(global.cg_get(_car, "relacao_final", -999), -999) - _rel) > 0.0001) return false;
+    return true;
+};
+
+// UNICO lugar que escreve gear_ratios / original_ratios / max_gears
+global.cg_init_car = function(_inst, _car, _fab) {
+    if (global.cg_num(global.cg_get(_car, "cg_versao", 0), 0) != global.cg_versao) {
+        if (global.cg_num(_car.cambio_mod, 0) == 1) {
+            _car.cambio_mod = 0;
+            _car.gears_mod = [];
+            if (global.cg_migrado != 1) {
+                global.cg_migrado = 1;
+                global.cg_diag("MIGRADO cambio_mod zerado (esquema antigo)");
+            }
+        }
+        _car.cg_versao = global.cg_versao;
+    }
+    var _n = array_length(_fab);
+    var _mult = global.cg_rel(_car) / global.cg_ref();
+    var _gm = global.cg_get(_car, "gears_mod", -1);
+    var _usar = (global.cg_num(global.cg_get(_car, "cambio_mod", 0), 0) == 1)
+        && is_array(_gm) && array_length(_gm) == _n;
+    if (global.cg_num(global.cg_get(_car, "cambio_mod", 0), 0) == 1 && !_usar) {
+        _car.cambio_mod = 0;
+        _car.gears_mod = [];
+    }
+    var _gr = array_create(_n);
+    var _or = array_create(_n);
+    for (var i = 0; i < _n; i++) {
+        _or[i] = _fab[i] * _mult;
+        var _b = _usar ? global.cg_base(_car, i) : -1;
+        _gr[i] = (_b > 0) ? _b : _or[i];
+    }
+    with (_inst) {
+        gear_ratios = _gr;
+        original_ratios = _or;
+        max_gears = _n;
+    }
+    return _n;
+};
+
+global.cg_aplicar = function(_inst, _car, _cand, _rel, _fab) {
+    var _erro = global.cg_validar(_car, _cand, _rel, _fab);
+    if (_erro != "") return _erro;
+    var _om = global.cg_get(_car, "cambio_mod", 0);
+    var _og = global.cg_get(_car, "gears_mod", -1);
+    var _orr = global.cg_get(_car, "relacao_final", global.cambio_rel_ref);
+    _car.cambio_mod = 1;
+    _car.gears_mod = CloneArray(_cand);
+    _car.relacao_final = _rel;
+    _car.cg_versao = global.cg_versao;
+    if (!global.cg_conferir(_car, _cand, _rel)) {
+        _car.cambio_mod = _om;
+        _car.gears_mod = _og;
+        _car.relacao_final = _orr;
+        global.cg_init_car(_inst, _car, _fab);
+        return "verificacao pos-gravacao falhou (rollback)";
+    }
+    global.cg_init_car(_inst, _car, _fab);
+    return "";
+};
+
+global.cg_resumo = function(_car) {
+    var _gm = global.cg_get(_car, "gears_mod", -1);
+    if (!is_array(_gm)) _gm = [];
+    var _s = "CG|v=" + string(global.cg_versao)
+        + "|mod=" + string(global.cg_num(global.cg_get(_car, "cambio_mod", 0), 0))
+        + "|rel=" + string(global.cg_rel(_car))
+        + "|n=" + string(array_length(_gm));
+    for (var i = 0; i < array_length(_gm); i++) {
+        _s += "|r" + string(i) + "=" + string(global.cg_num(_gm[i], -1));
+    }
+    return _s;
+};
+
+global.cg_diag = function(_s) {
+    var _f = file_text_open_append("cambio_save.txt");
+    if (_f == -1) return 0;
+    file_text_write_string(_f, _s);
+    file_text_writeln(_f);
+    file_text_close(_f);
+    return 1;
+};
+
+global.cambio_erro_t = 0;
+global.cambio_erro_txt = "";
+global.cambio_erro = function(_txt) {
+    global.cambio_erro_t = current_time;
+    global.cambio_erro_txt = _txt;
+};
+
+global.cambio_aviso_t = 0;
+global.cambio_aviso_txt = "";
+global.cg_avisar = function(_txt) {
+    global.cambio_aviso_t = current_time;
+    global.cambio_aviso_txt = _txt;
+};
+
+global.cambio_gratis = 0;
+global.cambio_pode_pagar = function(_custo) {
+    var _ok = (global.cash >= _custo) || (global.cambio_gratis == 1);
+    global.cg_diag((_ok ? "PODE PAGAR" : "SEM DINHEIRO")
+        + " custo=" + string(floor(_custo)) + " cash=" + string(floor(global.cash)));
+    return _ok;
+};
+
+global.cg_confirmar = function(_custo) {
+    var _car = global.car_data[global.vehicles_array];
+    var _inst = instance_find(obj_player, 0);
+    if (!instance_exists(_inst)) return "sem player na cena";
+    var _n = _inst.max_gears;
+    if (!variable_global_exists("gear_temp_array") || !is_array(global.gear_temp_array)) {
+        return "marchas nao carregadas no caderno";
+    }
+    if (array_length(global.gear_temp_array) != _n) {
+        return "marchas nao carregadas no caderno";
+    }
+    var _cand = array_create(_n);
+    for (var i = 0; i < _n; i++) _cand[i] = global.cg_num(global.gear_temp_array[i], -1);
+    var _rel = global.cg_rel(_car);
+    if (variable_global_exists("gear_temp_rel")) {
+        _rel = global.cg_num(global.gear_temp_rel, _rel);
+    }
+    var _fab = _inst.original_ratios;
+
+    var _erro = global.cg_validar(_car, _cand, _rel, _fab);
+    if (_erro != "") {
+        global.cambio_erro(_erro);
+        global.cg_diag("RECUSADO " + _erro);
+        return _erro;
+    }
+    var _av = global.cg_avisos(_car, _cand, _rel, _fab);
+    if (_av != "") global.cg_avisar("CAMBIO IRREAL: " + _av);
+
+    if (!global.cambio_pode_pagar(_custo)) {
+        global.cambio_erro("FALTA DINHEIRO: $" + string(floor(_custo - global.cash)));
+        return "sem dinheiro";
+    }
+    global.cash -= _custo;
+    _erro = global.cg_aplicar(_inst, _car, _cand, _rel, _fab);
+    if (_erro != "") {
+        global.cash += _custo;
+        global.cambio_erro(_erro);
+        global.cg_diag("FALHOU " + _erro);
+        return _erro;
+    }
+    SaveAllCars();
+    SaveGame();
+    global.cg_diag("GRAVOU " + global.cg_resumo(_car));
+    return "";
+};
+
 // ================= POWERTRAIN (base: Rigs of Rods Engine.cpp) =================
 // RoR: torque = max_torque * curva(rpm) * throttle ; clutch = clamp(slip * forca, +/-limite) ;
 // forca na roda = T * relacao / raio ; o corte de giro corta torque, nao a velocidade.
@@ -1186,6 +1433,7 @@ global.mod_dist_carregar = function() {
         global.mod_rev = ini_read_real("mod", "rev", 0);
         global.dev_cash = ini_read_real("dev", "cash", 0);
         global.dev_cash_modo = ini_read_real("dev", "cash_modo", 0);
+        global.cambio_gratis = ini_read_real("dev", "cambio_gratis", 0);
         ini_close();
     }
 };
@@ -1219,13 +1467,35 @@ if (instance_exists(obj_player) && global.kmh > 5) {
         + "   " + string(round(global.rpm)) + " rpm"
         + "   rel " + string(round(_rr * 100) / 100)
         + "   topo " + string(round(_topo))
-        + "   " + string(round(global.kmh)) + " km/h";
+        + "   " + string(round(global.kmh)) + " km/h"
+        + "   mod" + string(global.cg_num(global.car_data[global.vehicles_array].cambio_mod, 0))
+        + " gm" + string(array_length(global.car_data[global.vehicles_array].gears_mod));
     draw_set_halign(fa_left);
     draw_set_valign(fa_top);
     draw_set_alpha(0.8);
     draw_set_color(c_white);
     draw_text_transformed(12, 12, _txt, 0.6, 0.6, 0);
     draw_set_alpha(1);
+}
+
+// cambio: aviso amarelo (caixa irreal) e erro vermelho
+if (global.cambio_erro_t > 0 && current_time - global.cambio_erro_t < 3000) {
+    draw_set_halign(fa_center);
+    draw_set_valign(fa_top);
+    draw_set_alpha(0.95);
+    draw_set_color(c_red);
+    draw_text_transformed(display_get_gui_width() / 2, 84, global.cambio_erro_txt, 0.75, 0.75, 0);
+    draw_set_alpha(1);
+    draw_set_color(c_white);
+}
+if (global.cambio_aviso_t > 0 && current_time - global.cambio_aviso_t < 5000) {
+    draw_set_halign(fa_center);
+    draw_set_valign(fa_top);
+    draw_set_alpha(0.95);
+    draw_set_color(c_yellow);
+    draw_text_transformed(display_get_gui_width() / 2, 108, global.cambio_aviso_txt, 0.65, 0.65, 0);
+    draw_set_alpha(1);
+    draw_set_color(c_white);
 }
 
 // telemetria do noguintech (item comprado) + placa + FIPE
@@ -1268,18 +1538,33 @@ def csx_str(s):
 def _cq(t):
     return t.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
-CR_OLD = "max_gears = array_length(gear_ratios);"
-CR_NEW = _cq("""if (global.car_data[global.vehicles_array].cambio == 8)
+# ---- cambio: tabela de fabrica + camada cg (substitui a cadeia antiga) ----
+CR3_OLD = _cq("""if (global.car_data[global.vehicles_array].cambio == 1 || global.car_data[global.vehicles_array].cambio == 4)
 {
-    gear_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];
-    original_ratios = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];
+    gear_ratios = [9, 6.1, 3.7, 2.1];
+    original_ratios = [9, 6.1, 3.7, 2.1];
 }
-else if (global.car_data[global.vehicles_array].cambio == 9)
+else if (global.car_data[global.vehicles_array].cambio == 2 || global.car_data[global.vehicles_array].cambio == 5)
 {
-    gear_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];
-    original_ratios = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];
+    gear_ratios = [9, 6.1, 3.7, 2.5, 1.8];
+    original_ratios = [9, 6.1, 3.7, 2.5, 1.8];
+}
+else if (global.car_data[global.vehicles_array].cambio == 3 || global.car_data[global.vehicles_array].cambio == 6 || global.car_data[global.vehicles_array].cambio == 7)
+{
+    gear_ratios = [9.35, 6, 3.6, 2.7, 2.1, 1.7];
+    original_ratios = [9.35, 6, 3.6, 2.7, 2.1, 1.7];
+}
+if (global.car_data[global.vehicles_array].cambio_mod == 1 && array_length(global.car_data[global.vehicles_array].gears_mod) > 0)
+{
+    gear_ratios = global.car_data[global.vehicles_array].gears_mod;
 }
 max_gears = array_length(gear_ratios);""")
+CR3_NEW = _cq("""var _cg_fab = [9.35, 6, 3.6, 2.7, 2.1, 1.7];
+if (global.car_data[global.vehicles_array].cambio == 1 || global.car_data[global.vehicles_array].cambio == 4) _cg_fab = [9, 6.1, 3.7, 2.1];
+else if (global.car_data[global.vehicles_array].cambio == 2 || global.car_data[global.vehicles_array].cambio == 5) _cg_fab = [9, 6.1, 3.7, 2.5, 1.8];
+else if (global.car_data[global.vehicles_array].cambio == 8) _cg_fab = [9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7];
+else if (global.car_data[global.vehicles_array].cambio == 9) _cg_fab = [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55];
+global.cg_init_car(self, global.car_data[global.vehicles_array], _cg_fab);""")
 
 IT_OLD = _cq('_r("gsd_6m", "GSD 6 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");')
 IT_NEW = _cq("""_r("gsd_6m", "GSD 6 Marchas", "cambio", "un", 1, "spr_venture_externa", 6, "cambio", "");
@@ -1348,23 +1633,72 @@ struct_get_from_hash(global.item_db, variable_get_hash("manual_8m")).campo_val =
 REL_SCHEMA_OLD = _cq("data.gears_mod = [];")
 REL_SCHEMA_NEW = _cq("data.gears_mod = [];\ndata.relacao_final = 3.73;")
 
-REL_CREATE_OLD = _cq("max_gears = array_length(gear_ratios);")
-REL_CREATE_NEW = _cq("""max_gears = array_length(gear_ratios);
-var _rel_final = 1;
-if (variable_struct_exists(global.car_data[global.vehicles_array], "relacao_final")) {
-    var _rf_tmp = global.car_data[global.vehicles_array].relacao_final;
-    if (is_real(_rf_tmp) && _rf_tmp > 0) {
-        _rel_final = clamp(_rf_tmp, global.cambio_rel_min, global.cambio_rel_max) / global.cambio_rel_ref;
-    }
-}
-if (_rel_final != 1) {
-    for (var _ri = 0; _ri < max_gears; _ri++) {
-        gear_ratios[_ri] = gear_ratios[_ri] * _rel_final;
-        if (_ri < array_length(original_ratios)) {
-            original_ratios[_ri] = original_ratios[_ri] * _rel_final;
-        }
-    }
-}""")
+# ---- confirmacao do cambio: uma chamada so (teclado e mouse) ----
+CFK_OLD = _cq("""                        if (global.cash >= _custo_cambio)
+                        {
+                            global.cash -= _custo_cambio;
+                            global.car_data[global.vehicles_array].cambio_mod = 1;
+                            global.car_data[global.vehicles_array].gears_mod = [];
+                            for (var i = 0; i < obj_player.max_gears; i++)
+                            {
+                                global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];
+                                obj_player.gear_ratios[i] = global.gear_temp_array[i];
+                            }
+                            global.tiao_confirmacao_cambio = 0;
+                            global.modificando_cambio = true;
+                            global.tempo_modificacao = 0;
+                            play_audio(snd_conserto_motor);
+                            global.gear_temp_array = -1;
+                        }
+                        else
+                        {
+                            global.tiao_confirmacao_cambio = 0;
+                        }""")
+CFK_NEW = _cq("""                        if (global.cg_confirmar(_custo_cambio) == "")
+                        {
+                            global.tiao_confirmacao_cambio = 0;
+                            global.modificando_cambio = true;
+                            global.tempo_modificacao = 0;
+                            play_audio(snd_conserto_motor);
+                            global.gear_temp_array = -1;
+                        }
+                        else
+                        {
+                            global.tiao_confirmacao_cambio = 0;
+                        }""")
+
+CFM_OLD = _cq("""                    if (global.cash >= _custo_cambio)
+                    {
+                        global.cash -= _custo_cambio;
+                        global.car_data[global.vehicles_array].cambio_mod = 1;
+                        global.car_data[global.vehicles_array].gears_mod = [];
+                        for (var i = 0; i < obj_player.max_gears; i++)
+                        {
+                            global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];
+                            obj_player.gear_ratios[i] = global.gear_temp_array[i];
+                        }
+                        global.tiao_confirmacao_cambio = 0;
+                        global.modificando_cambio = true;
+                        global.tempo_modificacao = 0;
+                        play_audio(snd_conserto_motor);
+                        global.gear_temp_array = -1;
+                    }
+                    else
+                    {
+                        global.tiao_confirmacao_cambio = 0;
+                    }""")
+CFM_NEW = _cq("""                    if (global.cg_confirmar(_custo_cambio) == "")
+                    {
+                        global.tiao_confirmacao_cambio = 0;
+                        global.modificando_cambio = true;
+                        global.tempo_modificacao = 0;
+                        play_audio(snd_conserto_motor);
+                        global.gear_temp_array = -1;
+                    }
+                    else
+                    {
+                        global.tiao_confirmacao_cambio = 0;
+                    }""")
 
 LIM_OLD = _cq("""                if (arg0 == 0)
                 {
@@ -1480,13 +1814,6 @@ REL_COST_NEW = _cq('draw_text(_notebook_x + 80, _notebook_y + 176, "$" + string(
 
 REL_DBG_OLD = _cq('draw_text_transformed(_notebook_x, _notebook_y + 110, t + string(global.car_data[global.vehicles_array].gears_mod), 1, 1, 0);')
 REL_DBG_NEW = _cq('draw_text_transformed(_notebook_x, _notebook_y + 200, t + string(global.car_data[global.vehicles_array].gears_mod) + "  |  " + global.cambio_txt_rel() + ": " + string(global.car_data[global.vehicles_array].relacao_final), 1, 1, 0);')
-
-REL_SAVE1_OLD = _cq("global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];")
-REL_SAVE1_NEW = _cq("global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original;")
-REL_SAVE2_OLD = _cq("obj_player.gear_ratios[i] = global.gear_temp_array[i];")
-REL_SAVE2_NEW = _cq("obj_player.gear_ratios[i] = (global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original) * (global.gear_temp_rel / global.cambio_rel_ref);")
-REL_SAVE3_OLD = _cq("global.car_data[global.vehicles_array].cambio_mod = 1;")
-REL_SAVE3_NEW = _cq("global.car_data[global.vehicles_array].cambio_mod = 1;\nglobal.car_data[global.vehicles_array].relacao_final = global.gear_temp_rel;")
 
 VM1_OLD = _cq("""if (_gearlimit > 400)
 {
@@ -1722,7 +2049,7 @@ g.QueueAppend("gml_Object_obj_noguiin_Draw_64", {csx_str(GML_DRAW)});
 // ---- CAMBIOS 7 E 8 MARCHAS ----
 // razoes: cambio 8 = 7 marchas, cambio 9 = 8 marchas. max_gears sai do array_length,
 // entao troca, automatico, HUD e IA (que copia as razoes do jogador) ja funcionam.
-g.QueueFindReplace("gml_Object_obj_player_Create_0", "{CR_OLD}", "{CR_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Create_0", "{CR3_OLD}", "{CR3_NEW}", false);
 
 // nomes: 7 terminadores cobrem as 5 tabelas (case "cambio" indexado por cambio-1,
 // GetPartLevelsArray/2 e GetNamePartsVenture/2 indexados por nivel)
@@ -1765,8 +2092,9 @@ g.QueueFindReplace("gml_GlobalScript_Inventory", "{CV_OLD}", "{CV_NEW}", false);
 
 // ================= CAMBIO: relacao final + limites =================
 g.QueueFindReplace("gml_GlobalScript_EstruturaSalvamento", "{REL_SCHEMA_OLD}", "{REL_SCHEMA_NEW}", false);
-g.QueueFindReplace("gml_Object_obj_player_Create_0", "{REL_CREATE_OLD}", "{REL_CREATE_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{LIM_OLD}", "{LIM_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{CFK_OLD}", "{CFK_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{CFM_OLD}", "{CFM_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{LIM_USE_OLD}", "{LIM_USE_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_INIT_OLD}", "{REL_INIT_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_COUNT_OLD}", "{REL_COUNT_NEW}", false);
@@ -1774,9 +2102,6 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_NAV_OLD}", "{REL_NAV_N
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_ROW_OLD}", "{REL_ROW_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_COST_OLD}", "{REL_COST_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_DBG_OLD}", "{REL_DBG_NEW}", false);
-g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_SAVE1_OLD}", "{REL_SAVE1_NEW}", true);
-g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_SAVE2_OLD}", "{REL_SAVE2_NEW}", true);
-g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_SAVE3_OLD}", "{REL_SAVE3_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM1_OLD}", "{VM1_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM2_OLD}", "{VM2_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM3_OLD}", "{VM3_NEW}", false);
