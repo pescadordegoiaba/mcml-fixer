@@ -1652,6 +1652,64 @@ global.cambio_txt_rel = function() {
     }
 };
 
+// ================= POWERTRAIN (base: Rigs of Rods Engine.cpp) =================
+// RoR: torque = max_torque * curva(rpm) * throttle ; clutch = clamp(slip * forca, +/-limite) ;
+// forca na roda = T * relacao / raio ; o corte de giro corta torque, nao a velocidade.
+// O rpm continua vindo da roda (o jogo nao separa eixo de motor), mas a curva de torque
+// passa a ser a do RoR - cheia embaixo, o que faz relacao longa ainda puxar.
+global.pt_shift_t = 0;
+global.pt_shift_time = 0.22;
+
+global.pt_pico = function(_cmd) {
+    switch (_cmd) {
+        case 1: return 0.35;
+        case 2: return 0.50;
+        case 3: return 0.65;
+        case 4: return 0.55;
+        default: return 0.45;
+    }
+};
+
+global.pt_curva = function(_x, _pico) {
+    _x = clamp(_x, 0, 1);
+    var _d;
+    if (_x < _pico) _d = (_pico - _x) / max(0.05, _pico);
+    else _d = (_x - _pico) / max(0.05, 1 - _pico);
+    return max(0.45, 1 - power(clamp(_d, 0, 1), 1.6));
+};
+
+global.pt_torque = function(_base, _rpm, _redline, _cmd) {
+    var _x = _rpm / max(1, _redline);
+    var _alvo = global.maxtorque * (0.5 + 0.125 * global.litros) * global.pt_curva(_x, global.pt_pico(_cmd));
+    return max(_base, _alvo);
+};
+
+global.pt_ratio = function(_gear) {
+    if (_gear <= 0) return 0;
+    if (!instance_exists(obj_player)) return 0;
+    var _i = _gear - 1;
+    if (_i >= array_length(obj_player.gear_ratios)) return 0;
+    return obj_player.gear_ratios[_i];
+};
+
+global.pt_rpm_roda = function() {
+    var _r = global.pt_ratio(global.gear);
+    if (_r <= 0) return 0;
+    return global.kmh * _r * 16.667;
+};
+
+global.pt_em_corte = function() {
+    var _red = global.car_data[global.vehicles_array].rpm;
+    return (global.rpm >= _red - 50) ? 1 : 0;
+};
+
+global.pt_step = function() {
+    if (global.pt_shift_t > 0) {
+        global.pt_shift_t = max(0, global.pt_shift_t - global.dt);
+    }
+};
+// ==============================================================================
+
 global.mod_dist_carregar = function() {
     // o ini define os PADROES de uma compra nova; cada carro guarda a sua config
     if (file_exists(""mod_distribuidor.ini"")) {
@@ -1703,7 +1761,7 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
 // todo efeito de peca/ajuste entra no torque aqui, antes do hp
 g.QueueFindReplace("gml_Object_obj_player_Step_0",
     "global.hp = clamp(global.hp, 0, global.maxhp * 1.2);",
-    "global.torque *= global.motor_torque(global.car_data[global.vehicles_array], global.rpm, global.car_data[global.vehicles_array].rpm, global.afr); global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
+    "global.torque *= global.motor_torque(global.car_data[global.vehicles_array], global.rpm, global.car_data[global.vehicles_array].rpm, global.afr);\nglobal.torque = global.pt_torque(global.torque, global.rpm, global.car_data[global.vehicles_array].rpm, global.comando); global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
     false);
 
 // cabecote muda o conjunto de valvulas
@@ -1830,6 +1888,7 @@ g.QueueFindReplace("gml_Object_obj_ntc_dinamometro_confirm_Step_0",
     "if (global.cash >= global.dinamometro_custo)", false);
 
 g.QueueAppend("gml_Object_obj_player_Step_0", @"
+global.pt_step();
 if (global.mod_dist_ativo) {
     global.mod_dist_dano();
 }
@@ -1947,6 +2006,10 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh = clamp(global.km
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 300)\n    {\n        _fator_velocidade = 3.2;\n    }", "else if (global.kmh >= 400)\n    {\n        _fator_velocidade = 3.2;\n    }", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 250 && global.kmh < 300)", "else if (global.kmh >= 250 && global.kmh < 400)", false);
 // ===================================================================
+
+// ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        _target_speed = global.kmh + _acceleration;\n        if (global.kmh < global.cambio_vmax)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "play_audio(snd_gearchange);", "global.pt_shift_t = global.pt_shift_time; play_audio(snd_gearchange);", true);
 
 g.QueueFindReplace("gml_GlobalScript_GetNameParts",
     @"        default:
@@ -2098,7 +2161,7 @@ string s1 = "", s2 = "", s3 = "";
 try { s1 = GetDecompiledText(Data.Code.ByName("gml_RoomCC_Start_0_Create"), ctx, st); } catch { s1 = "ERR"; }
 try { s2 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_player_Step_0"), ctx, st); } catch { s2 = "ERR"; }
 try { s3 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_noguiin_Draw_64"), ctx, st); } catch { s3 = "ERR"; }
-string s4 = "", s5 = "", s6 = "", s7 = "", s8 = "", s9 = "", s10 = "", s11 = "", s12 = "";
+string s4 = "", s5 = "", s6 = "", s7 = "", s8 = "", s9 = "", s10 = "", s11 = "", s12 = "", s13 = "";
 try { s4 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_pc_window_Draw_0"), ctx, st); } catch { s4 = "ERR"; }
 try { s5 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_GetNameParts"), ctx, st); } catch { s5 = "ERR"; }
 try { s6 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Delivery"), ctx, st); } catch { s6 = "ERR"; }
@@ -2108,6 +2171,7 @@ try { s9 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_noguiin_Draw_0"), 
 try { s10 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_minigames_noguiintech"), ctx, st); } catch { s10 = "ERR"; }
 try { s11 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_EstruturaSalvamento"), ctx, st); } catch { s11 = "ERR"; }
 try { s12 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_player_Step_0"), ctx, st); } catch { s12 = "ERR"; }
+try { s13 = GetDecompiledText(Data.Code.ByName("gml_RoomCC_Start_0_Create"), ctx, st); } catch { s13 = "ERR"; }
 string n1 = "", n2 = "", n3 = "", n4 = "";
 try { n1 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_Step_0"), ctx, st); } catch { n1 = "ERR"; }
 try { n2 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_TOUGE_Step_0"), ctx, st); } catch { n2 = "ERR"; }
@@ -2158,6 +2222,10 @@ ScriptMessage($"MARK cambio_rel_ui={(s9.Contains("gear_temp_rel") && s9.Contains
 ScriptMessage($"MARK cambio_rel_save={(s9.Contains("relacao_final = global.gear_temp_rel") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cambio_limite={(s9.Contains("global.cambio_limite_pct") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cambio_vmax={(s12.Contains("global.cambio_vmax") ? "ok" : "ausente")}");
+ScriptMessage($"MARK pt_curva={(s13.Contains("global.pt_curva") && s13.Contains("global.pt_torque") ? "ok" : "ausente")}");
+ScriptMessage($"MARK pt_torque={(s12.Contains("global.pt_torque") ? "ok" : "ausente")}");
+ScriptMessage($"MARK pt_corte={(s12.Contains("global.pt_em_corte") ? "ok" : "ausente")}");
+ScriptMessage($"MARK pt_shift={(s12.Contains("global.pt_shift_t = global.pt_shift_time") ? "ok" : "ausente")}");
 ScriptMessage($"MARK dev_cash={(s1.Contains("global.dev_cash_aplicar") && s1.Contains("global.cash_guard") ? "ok" : "ausente")}");
 ScriptMessage($"MARK no_tracao_pen={(s2.Contains("if (_mod_points > 5)") ? "ausente" : "ok")}");
 ScriptMessage($"MARK no_launch_pen={(s2.Contains("_launch_grip") ? "ausente" : "ok")}");

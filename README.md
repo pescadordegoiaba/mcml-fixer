@@ -47,7 +47,7 @@ Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
 
 ```bash
 mcml-fixer --mod-install                 # aplica (backup automatico)
-mcml-fixer --mod-check                   # 51 marcadores dentro do decompilado
+mcml-fixer --mod-check                   # 55 marcadores dentro do decompilado
 mcml-fixer --mod-status                  # estado + caminho do ini
 mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
 mcml-fixer --mod-uninstall               # restaura o backup
@@ -137,7 +137,7 @@ rpm      45 hp   99 hp   171 hp
 Como o torque já carrega carburador, distribuidor e mods de motor, a potência
 acompanha tudo sem código extra.
 
-### Física do trem de força
+### Física do trem de força (base: Rigs of Rods)
 
 A aceleração deixou de ser um número por marcha. O carro puxa por
 `F = T · g / r` (torque, câmbio, raio da roda), limitado por `μ · m · g` e pelo

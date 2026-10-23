@@ -1101,6 +1101,64 @@ global.cambio_txt_rel = function() {
     }
 };
 
+// ================= POWERTRAIN (base: Rigs of Rods Engine.cpp) =================
+// RoR: torque = max_torque * curva(rpm) * throttle ; clutch = clamp(slip * forca, +/-limite) ;
+// forca na roda = T * relacao / raio ; o corte de giro corta torque, nao a velocidade.
+// O rpm continua vindo da roda (o jogo nao separa eixo de motor), mas a curva de torque
+// passa a ser a do RoR - cheia embaixo, o que faz relacao longa ainda puxar.
+global.pt_shift_t = 0;
+global.pt_shift_time = 0.22;
+
+global.pt_pico = function(_cmd) {
+    switch (_cmd) {
+        case 1: return 0.35;
+        case 2: return 0.50;
+        case 3: return 0.65;
+        case 4: return 0.55;
+        default: return 0.45;
+    }
+};
+
+global.pt_curva = function(_x, _pico) {
+    _x = clamp(_x, 0, 1);
+    var _d;
+    if (_x < _pico) _d = (_pico - _x) / max(0.05, _pico);
+    else _d = (_x - _pico) / max(0.05, 1 - _pico);
+    return max(0.45, 1 - power(clamp(_d, 0, 1), 1.6));
+};
+
+global.pt_torque = function(_base, _rpm, _redline, _cmd) {
+    var _x = _rpm / max(1, _redline);
+    var _alvo = global.maxtorque * (0.5 + 0.125 * global.litros) * global.pt_curva(_x, global.pt_pico(_cmd));
+    return max(_base, _alvo);
+};
+
+global.pt_ratio = function(_gear) {
+    if (_gear <= 0) return 0;
+    if (!instance_exists(obj_player)) return 0;
+    var _i = _gear - 1;
+    if (_i >= array_length(obj_player.gear_ratios)) return 0;
+    return obj_player.gear_ratios[_i];
+};
+
+global.pt_rpm_roda = function() {
+    var _r = global.pt_ratio(global.gear);
+    if (_r <= 0) return 0;
+    return global.kmh * _r * 16.667;
+};
+
+global.pt_em_corte = function() {
+    var _red = global.car_data[global.vehicles_array].rpm;
+    return (global.rpm >= _red - 50) ? 1 : 0;
+};
+
+global.pt_step = function() {
+    if (global.pt_shift_t > 0) {
+        global.pt_shift_t = max(0, global.pt_shift_t - global.dt);
+    }
+};
+// ==============================================================================
+
 global.mod_dist_carregar = function() {
     // o ini define os PADROES de uma compra nova; cada carro guarda a sua config
     if (file_exists(""mod_distribuidor.ini"")) {
@@ -1152,7 +1210,7 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
 // todo efeito de peca/ajuste entra no torque aqui, antes do hp
 g.QueueFindReplace("gml_Object_obj_player_Step_0",
     "global.hp = clamp(global.hp, 0, global.maxhp * 1.2);",
-    "global.torque *= global.motor_torque(global.car_data[global.vehicles_array], global.rpm, global.car_data[global.vehicles_array].rpm, global.afr); global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
+    "global.torque *= global.motor_torque(global.car_data[global.vehicles_array], global.rpm, global.car_data[global.vehicles_array].rpm, global.afr);\nglobal.torque = global.pt_torque(global.torque, global.rpm, global.car_data[global.vehicles_array].rpm, global.comando); global.hp = clamp(global.pot_hp(global.torque, global.rpm, global.maxtorque, global.car_data[global.vehicles_array].rpm, global.maxhp), 0, global.maxhp * 1.2);",
     false);
 
 // cabecote muda o conjunto de valvulas
@@ -1279,6 +1337,7 @@ g.QueueFindReplace("gml_Object_obj_ntc_dinamometro_confirm_Step_0",
     "if (global.cash >= global.dinamometro_custo)", false);
 
 g.QueueAppend("gml_Object_obj_player_Step_0", @"
+global.pt_step();
 if (global.mod_dist_ativo) {
     global.mod_dist_dano();
 }
@@ -1396,6 +1455,10 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh = clamp(global.km
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 300)\n    {\n        _fator_velocidade = 3.2;\n    }", "else if (global.kmh >= 400)\n    {\n        _fator_velocidade = 3.2;\n    }", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 250 && global.kmh < 300)", "else if (global.kmh >= 250 && global.kmh < 400)", false);
 // ===================================================================
+
+// ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        _target_speed = global.kmh + _acceleration;\n        if (global.kmh < global.cambio_vmax)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "play_audio(snd_gearchange);", "global.pt_shift_t = global.pt_shift_time; play_audio(snd_gearchange);", true);
 
 g.Import();
 ScriptMessage("MARK distribuidor=v2 instalado");

@@ -410,6 +410,40 @@ igual a uma marcha alterada.
 máximo a partir de 300. Virou `[cambio] vmax` (500) e o arrasto máximo subiu para
 400 km/h — sem isso a relação final longa não teria efeito.
 
+## 6b. Trem de força (base: Rigs of Rods)
+
+A transmissão deixou de ser um mapa velocidade→giro e passou a seguir o modelo do
+`Engine.cpp` do Rigs of Rods:
+
+| RoR (`source/main/gameplay/Engine.cpp`) | Aqui (`global.pt_*`) |
+|---|---|
+| `torque = max_torque * curva(rpm) * throttle` | `global.pt_torque()` — curva normalizada com pico em `pt_pico(comando)` |
+| `rpm` integra `(torque − clutch)/inércia` | o rpm continua vindo da roda (o jogo não separa eixo de motor) |
+| `clutch = clamp(slip * forca, ±limite)` | substituído por corte de torque na troca (0,22 s) |
+| `força = T * relação / raio` | `global.phys_base()` (já existia) |
+| corte de giro corta **torque** | `global.pt_em_corte()` zera a aceleração em vez de travar a velocidade |
+| `TorqueCurve::getEngineTorque()` (spline normalizada) | `global.pt_curva(x, pico)`, pico em 35–65% do giro conforme o comando |
+
+**O que mudou na prática**
+
+1. **Curva de torque cheia embaixo.** A curva linear antiga
+   (`lerp(0, maxtorque, rpm/redline)`) entregava ~19% do torque a 1650 rpm; a curva
+   nova entrega **58%** — medido: `torque_1650_base57=178.42` (base 57 → 178).
+   É isso que faz uma relação longa ainda puxar.
+2. **Fim da parede por marcha.** `_target_speed` não é mais
+   `min(kmh + aceleração, _gearlimit)`: o teto passou a ser o **corte de giro**
+   (que corta torque) e o `[cambio] vmax`. O topo agora é o equilíbrio entre
+   empuxo e arrasto, como no RoR.
+3. **Corte de troca.** Trocar de marcha zera 85% do torque por 0,22 s
+   (`global.pt_shift_time`), no lugar da troca instantânea.
+4. **Relação final entra na conta** como parte da relação total
+   (`global.pt_ratio(gear)`, que já inclui `rel/3,73` desde o `obj_player Create`).
+
+**Consequência para o topo:** relação mais longa **não** cria potência. O carro para
+onde `empuxo = arrasto`; com a 8ª em 0,4 e relação 2,8 a razão total fica 0,30, o
+motor cai a ~1650 rpm em 330 km/h e não sobe mais — só a curva cheia dá o empuxo
+que falta. Para 400+ km/h a razão total precisa ficar perto de 1,1–1,3.
+
 ## 7. Punições por tunar: removidas
 
 
