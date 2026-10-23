@@ -45,13 +45,16 @@ lim = lim[:lim.index("};")]
 ck("downforce_na_carga", "global.aero_f_down()" in lim)
 
 # --- empuxo limitado pela potencia ---
-ck("empuxo_por_potencia", "_acceleration = min(_acceleration, global.aero_thrust_units());" in step)
+ck("motor_nao_limitado_por_potencia", "min(_acceleration, global.aero_thrust_units())" not in step)
+ck("governador_no_step", "_acceleration *= global.aero_gov_mult(global.kmh);" in step)
+ck("topo_aero_resolvido", "global.aero_vmax_ms = function" in init and "global.aero_vmax_kmh = function" in init)
+ck("governador_joelho", "0.92 * _vm" in init)
 
 # --- sonda registra as forcas ---
 ck("potencia_pico", 'variable_global_exists("maxhp")' in init and "global.maxhp" in init)
 ck("potencia_falha_aberto", "_pw <= 0" in init)
 
-ck("sonda_aero", all(k in draw for k in ("fdrag=", "fdown=", "froll=", "pacc=", "cd=")))
+ck("sonda_aero", all(k in draw for k in ("fdrag=", "fdown=", "froll=", "pacc=", "cd=", "vmax_aero=", "acel_livre=")))
 
 falhas = [c for c in checks if not c[1]]
 for nome, ok in checks:

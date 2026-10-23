@@ -81,6 +81,23 @@ string gml = @"if (!variable_global_exists(""aet"")) {
     }
     _chk(""topo_com_perdas"", (_topo2 * 3.6) < (_topo * 3.6) - 5 && (_topo2 * 3.6) > 330, ""<"" + string(_topo * 3.6), _topo2 * 3.6);
 
+    // 9b: separacao motor/aero - a potencia define o TOPO, nao a aceleracao
+    // 570 hp, 1300 kg, Cd 0.35, A 2.0, Cl 0.45, Crr 0.012 -> P = b*v^3 + c*v
+    global.maxhp = 570; global.hp = 570;
+    global.cx = 0.35; global.area_frontal = 2.0; global.weight = 1.3;
+    global.aero_cl = 0.45; global.aero_forca_ind = 1; global.aero_crr = 0.012;
+    var _vm = global.aero_vmax_kmh();
+    _chk(""vmax_570hp"", abs(_vm - 343) < 6, 343, _vm);
+
+    // 9c: governador - abaixo do joelho o empuxo nao e tocado
+    _chk(""gov_livre"", global.aero_gov_mult(0.5 * _vm) == 1, 1, global.aero_gov_mult(0.5 * _vm));
+    _chk(""gov_joelho"", abs(global.aero_gov_mult(0.92 * _vm) - 1) < 0.01, 1, global.aero_gov_mult(0.92 * _vm));
+    _chk(""gov_meio"", abs(global.aero_gov_mult(0.96 * _vm) - 0.5) < 0.03, 0.5, global.aero_gov_mult(0.96 * _vm));
+    _chk(""gov_topo"", abs(global.aero_gov_mult(_vm)) < 0.01, 0, global.aero_gov_mult(_vm));
+
+    // 9d: 3a marcha a 120 km/h esta MUITO abaixo do topo -> aceleracao intacta
+    _chk(""terceira_livre"", global.aero_gov_mult(120) == 1, 1, global.aero_gov_mult(120));
+
     // 10: armadilha de realimentacao - hp instantaneo baixo (logo apos a troca) NAO pode
     // derrubar o limite de potencia, senao o motor nao sobe de giro de novo
     global.aero_forca_ind = 0; global.aero_crr = 0;

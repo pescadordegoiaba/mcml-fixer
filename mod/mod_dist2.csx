@@ -892,6 +892,40 @@ global.aero_power_w = function() {
     return _p * 745.7;
 };
 
+// TOPO aerodinamico: resolve P = b*v^3 + c*v (empuxo = arrasto + rolamento)
+//   b = 0.5*rho*(Cd_ef*A + Cl*A*Crr)   c = Crr*m*g
+// A potencia entra so aqui: e ela que define a velocidade maxima, nao a aceleracao.
+global.aero_vmax_ms = function() {
+    var _pw = global.aero_power_w();
+    if (_pw <= 0) return 300;
+    var _a = global.area_frontal;
+    if (is_undefined(_a) || _a <= 0) return 300;
+    var _b = 0.5 * global.aero_rho * ((global.aero_cd() * _a) + (global.aero_cl * _a * global.aero_crr));
+    var _c = global.aero_crr * global.aero_massa() * global.aero_g;
+    if (_b <= 0) return 300;
+    var _lo = 1;
+    var _hi = 300;
+    repeat (40) {
+        var _mid = (_lo + _hi) / 2;
+        if ((_b * _mid * _mid * _mid) + (_c * _mid) < _pw) _lo = _mid; else _hi = _mid;
+    }
+    return _lo;
+};
+
+global.aero_vmax_kmh = function() { return global.aero_vmax_ms() * 3.6; };
+
+// Governador do topo: devolve o multiplicador do EMPUXO conforme a velocidade.
+// Abaixo de 92% do topo aerodinamico = 1 (motor entrega tudo, nada de limitar
+// aceleracao); de 92% a 100% cai linearmente ate 0. E a aerodinamica que fecha a
+// velocidade, nao o motor.
+global.aero_gov_mult = function(_kmh) {
+    var _vm = global.aero_vmax_kmh();
+    if (_vm <= 1) return 1;
+    var _knee = 0.92 * _vm;
+    if (_kmh <= _knee) return 1;
+    return clamp((_vm - _kmh) / max(1, _vm - _knee), 0, 1);
+};
+
 // empuxo maximo que a potencia permite na velocidade atual, em unidades de _acceleration
 global.aero_thrust_units = function() {
     if (global.aero_ativo != 1) return 999;
@@ -1192,6 +1226,8 @@ global.cg_versao = 3;
 global.cg_migrado = 0;
 global.cg_probe_t = 0;
 global.cg_car_t = 0;
+global.cg_vmax_aero = 999;
+global.cg_acel_livre = 0;
 global.cg_acc = 0;
 global.cg_drag = 0;
 global.cg_fv = 1;
@@ -1742,7 +1778,8 @@ if (instance_exists(obj_player) && global.kmh > 5) {
             + "" area="" + string(global.area_frontal) + "" m="" + string(round(global.aero_massa()))
             + "" cd="" + string(round(global.aero_cd() * 1000) / 1000)
             + "" pacc_livre="" + string(round(global.aero_thrust_units() * 10) / 10)
-            + "" v_topo="" + string(round(power((2 * global.aero_power_w()) / (global.aero_rho * global.aero_cd() * global.area_frontal), 1 / 3) * 3.6)));
+            + "" v_topo="" + string(round(power((2 * global.aero_power_w()) / (global.aero_rho * global.aero_cd() * global.area_frontal), 1 / 3) * 3.6))
+            + "" vmax_aero="" + string(round(global.aero_vmax_kmh())));
     }
     // sonda do topo: registra o que limita acima de 300 km/h
     if (global.kmh > 300 && current_time - global.cg_probe_t > 400) {
@@ -1764,6 +1801,8 @@ if (instance_exists(obj_player) && global.kmh > 5) {
             + "" froll="" + string(round(global.aero_f_roll()))
             + "" pacc="" + string(round(global.aero_thrust_units() * 100) / 100)
             + "" cd="" + string(round(global.aero_cd() * 1000) / 1000)
+            + "" vmax_aero="" + string(round(global.cg_vmax_aero))
+            + "" acel_livre="" + string(round(global.cg_acel_livre * 100) / 100)
             + "" at="" + string(global.car_data[global.vehicles_array].at));
     }
     draw_set_alpha(1);
@@ -1885,7 +1924,7 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "_desacel_arrasto *= _mod_mul
 // ===================================================================
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
-g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        _acceleration = min(_acceleration, global.aero_thrust_units());\n        global.cg_acc = _acceleration;\n        _target_speed = global.kmh + _acceleration;\n        if (global.kmh < global.cambio_vmax)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        global.cg_vmax_aero = global.aero_vmax_kmh();\n        global.cg_acel_livre = _acceleration;\n        _acceleration *= global.aero_gov_mult(global.kmh);\n        global.cg_acc = _acceleration;\n        _target_speed = min(global.kmh + _acceleration, global.cg_vmax_aero);\n        if (global.kmh < global.cambio_vmax)", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "    var _forca_arrasto = 0.5 * _cx * _area_frontal * _densidade_ar * (_velocidade_ms * _velocidade_ms);\n    var _desacel_arrasto = _forca_arrasto / 25000;", "    var _desacel_arrasto = global.aero_drag_units();", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh -= (_desacel_arrasto * global.dt);", "global.kmh -= (_desacel_arrasto * global.dt);\nglobal.cg_drag = _desacel_arrasto;\nglobal.cg_fv = _fator_velocidade;", false);
 g.QueueFindReplace("gml_Object_obj_player_Collision_obj_ia_car_TOUGE", "clamp(global.kmh, 0, 400)", "clamp(global.kmh, 0, global.cambio_vmax)", true);

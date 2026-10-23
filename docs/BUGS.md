@@ -710,3 +710,44 @@ falha **aberta** (retorna 999, sem limite) em vez de travar o carro.
 Provas: `mod/aero_test.csx` casos `potencia_pico` e `falha_aberto` (12/12);
 `verify_aero.py` 12/12; sonda `CAR` registra `maxhp`, `pacc_livre` e `v_topo` na
 primeira vez que o carro anda.
+
+## BUG 28 — potência limitando aceleração em vez de velocidade (separação motor × aero)
+
+A 3.2.x usava `_acceleration = min(_acceleration, P/(m·v))`. Isso fazia a potência
+**cortar a aceleração** progressivamente: com 570 hp e 1300 kg, a 120 km/h o empuxo já
+caía de 21 para ~19 unidades, a 200 km/h para ~7. Resultado: o motor não subia de giro
+como antes, e o comportamento dependia de duas variáveis ao mesmo tempo.
+
+Física errada de modelagem: potência e torque são a mesma grandeza (`P = T·ω`), então
+usar `P/v` para limitar aceleração é contar o motor duas vezes — uma no torque
+(`phys_base`) e outra na potência.
+
+**Correção (3.3.0) — dois fatores independentes:**
+
+| fator | responsável por | onde |
+|---|---|---|
+| motor (torque × rpm) | **aceleração** | `phys_base` → `_acceleration`, clamp `_max_acc = 21` |
+| aerodinâmica (arrasto + downforce + rolamento) | **velocidade máxima** | `global.aero_vmax_kmh()` + `aero_gov_mult` |
+
+O topo sai de `P = b·v³ + c·v` (empuxo = arrasto + rolamento), resolvido por bisseção:
+
+```
+b = ½·ρ·(Cd_ef·A + Cl·A·Crr)      c = Crr·m·g
+```
+
+O governador só age na faixa final: abaixo de **92 % do topo** o multiplicador é 1
+(motor entrega tudo, nada de limitar aceleração); de 92 % a 100 % cai linearmente até 0.
+Sem parede e sem oscilação, porque o empuxo chega a zero exatamente no topo.
+
+**Contas para 570 hp / 1300 kg / Cd 0,35 / A 2,0 / Cl 0,45:**
+
+```
+b = 0,4725     c = 153,0     P = 425.049 W
+0,4725·v³ + 153·v = 425.049  ->  v = 95,4 m/s = 343 km/h
+```
+
+Da 3ª à 6ª (até ~300 km/h) o governador fica em 1: aceleração de motor puro.
+
+Provas: `aero_test` casos `vmax_570hp`, `gov_livre`, `gov_joelho`, `gov_meio`,
+`gov_topo`, `terceira_livre` (18/18); `verify_aero.py` 15/15 com
+`motor_nao_limitado_por_potencia` e `governador_no_step`.

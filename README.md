@@ -27,7 +27,7 @@ os 18 estão catalogados com evidência em **[`docs/BUGS.md`](docs/BUGS.md)**.
 
 ## Documentação
 
-- [`docs/BUGS.md`](docs/BUGS.md) — os 26 bugs, com as contas que explicam cada um
+- [`docs/BUGS.md`](docs/BUGS.md) — os 28 bugs, com as contas que explicam cada um
   e duas armadilhas de processo (GML de escopo de evento e o checksum do GEN8 no
   UTMT).
 - [`docs/MOD.md`](docs/MOD.md) — o mod por dentro: física, distribuidor,
@@ -47,7 +47,7 @@ Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
 
 ```bash
 mcml-fixer --mod-install                 # aplica (backup automatico)
-mcml-fixer --mod-check                   # 68 marcadores dentro do decompilado
+mcml-fixer --mod-check                   # 69 marcadores dentro do decompilado
 mcml-fixer --mod-status                  # estado + caminho do ini
 mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
 mcml-fixer --mod-uninstall               # restaura o backup

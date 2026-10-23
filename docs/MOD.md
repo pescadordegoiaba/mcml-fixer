@@ -712,7 +712,7 @@ faixa de velocidade: a curva é contínua.
 | induzido | `Cd_ef = Cd + Cl²/(π·e·AR)` | dentro do arrasto |
 | downforce | `½·ρ·Cl·A·v²` | carga do pneu (`phys_limite`) |
 | rolamento | `Crr·(m·g + downforce)` | `_desacel_arrasto` |
-| empuxo | `min(marcha, P_pico/v)` | `_acceleration` |
+| topo | `P = b·v³ + c·v` → governador 92–100 % | `_target_speed` |
 
 O Cd (`global.cx`) e a área (`global.area_frontal`) já vêm do jogo por carro
 (`GetCar.gml`: Cd 0,25–0,6 e A 1,8–2,3 m²).
@@ -728,7 +728,7 @@ O Cd (`global.cx`) e a área (`global.area_frontal`) já vêm do jogo por carro
 | 1000 hp | 442 km/h |
 | 1400 hp | 487 km/h |
 
-`P_pico` é `global.maxhp`, não o hp instantâneo: o jogo faz `hp = lerp(0, maxhp, rpm/red)`, e usar o instantâneo criava um laço (giro baixo → limite baixo → giro sobe devagar) que travava o motor da 3ª em diante.
+A potência **não** limita aceleração: ela só define o topo (`aero_vmax_kmh`). Aceleração vem do motor (torque × rpm) via `phys_base`, com o clamp `_max_acc`. `P_pico` é `global.maxhp`, não o hp instantâneo: o jogo faz `hp = lerp(0, maxhp, rpm/red)`, e usar o instantâneo criava um laço (giro baixo → limite baixo → giro sobe devagar) que travava o motor da 3ª em diante.
 
 Para passar dos 500 é preciso potência ou menos área frontal — relação de câmbio longa
 sozinha não chega lá, porque o empuxo agora cai com `1/v`.
