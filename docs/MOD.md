@@ -491,8 +491,11 @@ chamam a mesma função): valida → cobra → aplica → confere → `SaveAllCa
 - `gear_ratios` recebe um **array novo** a cada criação: mexer na relação final não
   corrompe mais o save.
 - Sem saldo o confirm **avisa** (`FALTA DINHEIRO`) em vez de fechar calado.
-- Saves do esquema antigo (sem `car.cg_versao`) são migrados: `cambio_mod = 0` e
-  `gears_mod = []` (volta ao de fábrica), com linha `MIGRADO` no log.
+- Saves do esquema antigo (sem `car.cg_versao`) têm as razões convertidas de base
+  para efetiva (`× rel/ref`), com linha `MIGRADO` no log.
+- `cambio_mod = 1` é a **flag do jogo** que libera a opção CÂMBIO na oficina
+  (`05221:6771`): a camada `cg` nunca a zera. O item "Forjar Cambio"
+  (`transmissao_desempenho`) é quem liga.
 
 **Custo:** `global.cambio_custo` (775) × nº de marchas alteradas + 1 se a relação
 final mudou. Caixa completa de 8 marchas = $6.975.

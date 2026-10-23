@@ -64,6 +64,8 @@ ck("sem_speed_resistance", "lerp(1, 0.5, _smooth_ratio)" not in step)
 ck("corte_por_roda", "global.pt_rpm_roda()" in init)
 ck("salva_no_confirmar", "SaveAllCars();" in init and "SaveGame();" in init)
 ck("migracao_esquema", "cg_versao" in init and "MIGRADO" in init)
+_ini = init[init.index("global.cg_init_car = function"):init.index("global.cg_aplicar = function")]
+ck("flag_edicao_preservada", "_car.cambio_mod = 0" not in _ini)
 
 # 7. relacao final embutida uma unica vez (sem multiplicacao dupla)
 ck("create_sem_escrita_direta",

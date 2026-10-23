@@ -1203,12 +1203,18 @@ global.cg_conferir = function(_car, _cand, _rel) {
 // UNICO lugar que escreve gear_ratios / original_ratios / max_gears
 global.cg_init_car = function(_inst, _car, _fab) {
     if (global.cg_num(global.cg_get(_car, ""cg_versao"", 0), 0) != global.cg_versao) {
-        if (global.cg_num(_car.cambio_mod, 0) == 1) {
-            _car.cambio_mod = 0;
-            _car.gears_mod = [];
+        // esquema antigo guardava a razao BASE: converte para efetiva (x rel/ref)
+        var _gmig = global.cg_get(_car, ""gears_mod"", -1);
+        if (global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0) == 1 && is_array(_gmig)) {
+            var _cm = global.cg_rel(_car) / global.cg_ref();
+            for (var _mi = 0; _mi < array_length(_gmig); _mi++) {
+                var _mv = global.cg_num(_gmig[_mi], -1);
+                if (_mv > 0) _gmig[_mi] = _mv * _cm;
+            }
+            _car.gears_mod = _gmig;
             if (global.cg_migrado != 1) {
                 global.cg_migrado = 1;
-                global.cg_diag(""MIGRADO cambio_mod zerado (esquema antigo)"");
+                global.cg_diag(""MIGRADO razoes base -> efetivas (x"" + string(_cm) + "")"");
             }
         }
         _car.cg_versao = global.cg_versao;
@@ -1218,10 +1224,8 @@ global.cg_init_car = function(_inst, _car, _fab) {
     var _gm = global.cg_get(_car, ""gears_mod"", -1);
     var _usar = (global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0) == 1)
         && is_array(_gm) && array_length(_gm) == _n;
-    if (global.cg_num(global.cg_get(_car, ""cambio_mod"", 0), 0) == 1 && !_usar) {
-        _car.cambio_mod = 0;
-        _car.gears_mod = [];
-    }
+    // cambio_mod == 1 e a FLAG de ""cambio liberado para editar"" no Tiao
+    // (05221:6771 tem_cambio). NAO zerar: sem ela o menu CAMBIO desaparece.
     var _gr = array_create(_n);
     var _or = array_create(_n);
     for (var i = 0; i < _n; i++) {

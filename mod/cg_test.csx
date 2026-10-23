@@ -87,6 +87,16 @@ string gml = @"if (!variable_global_exists(""cgt"")) {
     var _r2 = global.cg_aplicar(id, _car2, _bad, 3.73, _fab);
     _chk(""rollback"", _r2 != """" && _car2.cambio_mod == 0 && array_length(_car2.gears_mod) == 0, ""recusado"", _r2);
 
+    // 13: cambio_mod=1 com gears_mod vazio continua editavel (menu CAMBIO do Tiao)
+    var _car3 = { cambio: 9, cambio_mod: 1, gears_mod: [], relacao_final: 3.73, rpm: 8500, cg_versao: 3 };
+    global.cg_init_car(id, _car3, _fab);
+    _chk(""flag_edicao"", _car3.cambio_mod == 1 && max_gears == 8, ""mod=1/max=8"", string(_car3.cambio_mod) + ""/"" + string(max_gears));
+
+    // 14: migracao converte base -> efetiva e mantem a flag
+    var _car4 = { cambio: 9, cambio_mod: 1, gears_mod: [9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55], relacao_final: 3.73 };
+    global.cg_init_car(id, _car4, _fab);
+    _chk(""migracao"", _car4.cambio_mod == 1 && abs(_car4.gears_mod[7] - 1.55) < 0.001 && _car4.cg_versao == 3, ""1.55"", string(_car4.gears_mod[7]));
+
     var _h = file_text_open_append(""cg_test.txt"");
     file_text_write_string(_h, ""RESUMO pass="" + string(global.cgt_p) + "" fail="" + string(global.cgt_f));
     file_text_writeln(_h);

@@ -553,3 +553,32 @@ devolve `car.gears_mod` por referência. Teste `clone` do `cg_test` cobre isso.
 
 **Lição:** ler campo opcional de struct (`car.cg_versao`, `car.cambio_mod`) sem
 `variable_struct_exists` derruba o runner. Use sempre `global.cg_get(struct, chave, padrao)`.
+
+## BUG 23 — o menu CÂMBIO do Tião desapareceu (regressão da 3.0.0)
+
+`05221:6771`:
+
+```gml
+var tem_cambio = global.car_data[global.vehicles_array].cambio_mod == 1;
+```
+
+A opção **CÂMBIO** na oficina só existe quando `cambio_mod == 1` — e quem liga essa
+flag é o item **"Forjar Cambio"** (`transmissao_desempenho`, `03996:3004`), que grava
+`cambio_mod = 1; gears_mod = [];`.
+
+A camada `cg` da 3.0.0 tratava "flag ligada + razões vazias" como estado inválido e
+zerava `cambio_mod` no `cg_init_car`. Resultado: forjar o câmbio deixava de abrir o
+editor, e o jogador ficava sem onde ajustar as marchas.
+
+**Correção (3.0.1):** `cg_init_car` **nunca** escreve `cambio_mod = 0`. A flag é do
+jogo, não da camada: ela significa "câmbio liberado para editar". Com razões vazias o
+carro usa a tabela de fábrica e o menu continua aparecendo.
+
+**Migração corrigida:** em vez de zerar, converte as razões do esquema antigo
+(base → efetiva, `× rel/ref`) e mantém a flag.
+
+**Provas:** `cg_test` casos `flag_edicao` e `migracao`;
+`tools/verify_cambio.py` → `flag_edicao_preservada` (19 invariantes).
+
+**Lição:** antes de "limpar" um estado que parece inconsistente, procure **quem lê**
+esse estado (`tem_cambio`) — ele pode ser a chave de uma tela.
