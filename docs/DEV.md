@@ -133,3 +133,44 @@ TOPO kmh=400 rpm=4670 gear=8/8 r=0.7 rpm_roda=4667 corte=0 acc=21 drag=1.17 fv=3
 
 Se `acc` estiver alto e o carro não passar, o limite é um clamp; se `acc` estiver em 0,
 é `corte` ou falta de torque.
+
+### Escalas do jogo para física (não chutar)
+
+`global.dt = (delta_time/1e6)*60` (`04888_gml_Object_obj_dt_Create_0.gml:1`) → **dt = 1,0
+por frame a 60 fps**. Integrar newton em `global.kmh` exige uma das duas réguas:
+
+```
+_acceleration     : aplicada por lerp(kmh, kmh+acc, 0.05) -> 1 un = 0.8333 m/s2
+_desacel_arrasto  : subtraida direto (kmh -= x * dt)      -> 1 un = 16.667 m/s2
+```
+
+Equilíbrio por frame: `0.05·_acceleration = _desacel_arrasto`. Como as duas escalas
+diferem 20×, um erro de régua aparece como topo de velocidade errado — `topo_simulado`
+em `mod/aero_test.csx` é justamente o teste que pega isso (refaz o equilíbrio com as
+funções da camada e compara com `∛(2P/(ρCdA))`).
+
+### Ler a sonda aero
+
+`~/.config/My_Car_My_Life/cambio_save.txt`, linha `TOPO` acima de 300 km/h:
+
+| campo | o que é |
+|---|---|
+| `fdrag` | arrasto em N |
+| `fdown` | downforce em N |
+| `froll` | rolamento em N |
+| `pacc` | empuxo máximo que a potência permite, em unidades de `_acceleration` |
+| `cd` | Cd efetivo (com induzido) |
+| `acc` | aceleração realmente aplicada |
+
+Sinal de problema: `acc` travado em 21 com `pacc` baixo = o clamp de potência não está
+sendo aplicado (cheque o marcador `aero_potencia`). `fdown` alto e `slip` alto = pneu
+sem composto para tanta carga.
+
+### Rodar as validades da aero
+
+```bash
+cd /home/gullin/projetos/mcml-fixer
+./mod/run_csx.sh aero_test                       # V2
+(timeout -k 3 15 ./My_Car_My_Life >/dev/null 2>&1) && cat ~/.config/My_Car_My_Life/aero_test.txt
+python3 tools/verify_aero.py                     # V1 (10 checks)
+~/.local/bin/mcml-fixer --mod-install            # reinstalar limpo depois do harness

@@ -637,3 +637,44 @@ Teto padrão do câmbio subiu de 500 para 1000 (`[cambio] vmax`).
 **Consequência:** o topo passa a ser o **corte de giro**, não o arrasto. Com 8ª 0,70 e
 corte 8500: 728 km/h. Com 6ª 1,20: 425 km/h — era onde o usuário estava (a sonda mostrou
 `gear=6/8` a 400 km/h, ou seja, o carro já estava a 94 % do corte naquela marcha).
+
+## BUG 26 — empuxo sem limite de potência e arrasto de divisor fixo
+
+Depois de derrubarem as paredes de 300/400 km/h (BUG 25) o carro passou dos 500 com
+facilidade. Medindo o `obj_player_Step_0`:
+
+| Ponto | Código | Efeito |
+|---|---|---|
+| `:1364` | `_acceleration = clamp(_acceleration, 0, _max_acc);` (`_max_acc = 21`) | 21 unidades = **17,5 m/s² constantes**, não caem com a velocidade |
+| `:520` | `_desacel_arrasto = _forca_arrasto / 25000;` | divisor fixo que só vale para 1500 kg |
+
+Um carro real entrega `F = P/v`: a potência é o teto, não a marcha. A 400 km/h, 600 hp
+empurram `447.420 / 111,1 = 4.027 N` → **3,1 m/s²**, não 17,5. Sem isso nenhum arrasto
+segura o carro e o único limite que sobra é o corte de giro.
+
+**Correção (3.2.0):** camada `global.aero_*` em SI e três ganchos:
+
+```
+F_arrasto = ½·ρ·(Cd + Cl²/(π·e·AR))·A·v²      ->  / (16,667 · m)
+F_z       = m·g + ½·ρ·Cl·A·v²                 ->  phys_limite = μ·F_z·share
+_acceleration = min(_acceleration, (P/(m·v)) / 0,8333)
+```
+
+Fórmulas de `F = ½ρCv²A` (NASA Glenn, *Modern Drag Equation*), `F = −C_L·½ρv²A`
+(Wikipedia, *Downforce*), `C_Di = C_L²/(πeAR)` (NASA, *Induced Drag Coefficient*) e
+`F_rr = C_rr·F_z` com C_rr 0,008–0,015 (asfalto).
+
+Constantes: ρ 1,225 kg/m³, g 9,81, AR 2,5, e 0,85 → k_ind 0,1498. Cl padrão 0,45, tudo
+editável no ini (`[aero] cl`, `ativo`, `induzido`, `crr`).
+
+**Escalas do jogo** (medidas, não deduzidas): `global.dt = (delta_time/1e6)*60`
+(`04888:1`) → 1,0 por frame a 60 fps. Daí:
+
+| grandeza | aplicada por | 1 unidade vale |
+|---|---|---|
+| `_acceleration` | `lerp(kmh, kmh+acc, 0.05)` | 0,8333 m/s² |
+| `_desacel_arrasto` | `kmh -= x * dt` | 16,667 m/s² |
+
+**Prova (rodando):** `mod/aero_test.csx` 9/9 — inclusive `topo_simulado`, que refaz a
+busca do equilíbrio com as duas escalas e tem que bater o valor analítico
+(`v = ∛(2P/(ρCdA))` = 376 km/h para 600 hp, CdA 0,64).

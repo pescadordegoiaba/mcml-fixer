@@ -700,3 +700,49 @@ phys_base  phys_gear  phys_npc  phys_inercia  phys_cfg
 a injeção `_mcarb` no Step; `torque` confere
 `global.torque *= global.mod_dist_fator()` **e**
 `global.ignicao = global.mod_dist_estado.avanco`.
+
+## 12b. Aerodinâmica (3.2.0)
+
+O mod calcula força em newtons e converte para a escala do jogo. Nada de tabela por
+faixa de velocidade: a curva é contínua.
+
+| Força | Fórmula | Entra em |
+|---|---|---|
+| arrasto | `½·ρ·Cd_ef·A·v²` | `_desacel_arrasto` |
+| induzido | `Cd_ef = Cd + Cl²/(π·e·AR)` | dentro do arrasto |
+| downforce | `½·ρ·Cl·A·v²` | carga do pneu (`phys_limite`) |
+| rolamento | `Crr·(m·g + downforce)` | `_desacel_arrasto` |
+| empuxo | `min(marcha, P/v)` | `_acceleration` |
+
+O Cd (`global.cx`) e a área (`global.area_frontal`) já vêm do jogo por carro
+(`GetCar.gml`: Cd 0,25–0,6 e A 1,8–2,3 m²).
+
+### Consequência: o teto é a potência
+
+`½·ρ·CdA·v³ = P` → `v = ∛(2P/(ρ·CdA))`:
+
+| potência | CdA 0,64 (Cd 0,32 / A 2,0) |
+|---|---|
+| 400 hp | 320 km/h |
+| 600 hp | 376 km/h |
+| 1000 hp | 442 km/h |
+| 1400 hp | 487 km/h |
+
+Para passar dos 500 é preciso potência ou menos área frontal — relação de câmbio longa
+sozinha não chega lá, porque o empuxo agora cai com `1/v`.
+
+### Chaves do ini
+
+```ini
+[aero]
+cl=0.45        ; downforce (0 = carro de rua, 1.5 = asa de corrida)
+ativo=1        ; 0 desliga downforce e arrasto da camada
+induzido=1     ; 0 desconta o custo em arrasto do downforce
+crr=0.012      ; rolamento (0.008-0.015 asfalto, 0.02+ terra)
+```
+
+## 12c. Dyno
+
+No dinamômetro a camada é a mesma; se você medir potência lá e quiser o número limpo,
+ponha `[aero] ativo=0` antes de subir no rolo — assim o downforce não aumenta a carga
+e o arrasto não consome parte do que a roda entrega.

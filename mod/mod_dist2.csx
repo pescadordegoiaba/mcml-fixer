@@ -769,7 +769,9 @@ global.phys_forca = function(_torque, _relacao, _raio, _efic) {
 };
 
 global.phys_limite = function(_massa_kg, _mu, _share) {
-    return _massa_kg * 9.81 * _mu * _share;
+    var _fz = _massa_kg * 9.81;
+    if (global.aero_ativo == 1) _fz += global.aero_f_down();
+    return _fz * _mu * _share;
 };
 
 // aderencia por composto e temperatura
@@ -816,6 +818,79 @@ global.phys_clutch = function(_torque_motor, _slip, _abertura, _cap) {
     _t *= 1 - exp(-abs(_slip));
     if (abs(_t) > abs(_torque_motor)) _t = _torque_motor;
     return _t;
+};
+
+// ================= AERODINAMICA (SI -> escalas do jogo) =================
+// global.dt = (delta_time/1e6)*60 -> 1.0 por frame a 60 fps (04888).
+//   _acceleration e aplicada por lerp(0.05) -> 1 unidade = 0.8333 m/s2
+//   _desacel_arrasto e subtraida direto  -> 1 unidade = 16.667 m/s2
+global.aero_rho = 1.225;
+global.aero_g = 9.81;
+global.aero_crr = 0.012;
+global.aero_ar = 2.5;
+global.aero_e = 0.85;
+global.aero_k_ind = 1 / (pi * global.aero_e * global.aero_ar);
+global.aero_cl = 0.45;
+global.aero_ativo = 1;
+global.aero_forca_ind = 1;
+
+global.aero_massa = function() {
+    var _m = global.weight * 1000;
+    if (is_undefined(_m) || _m < 100) return 1200;
+    return _m;
+};
+
+global.aero_v = function() { return max(0, global.kmh) / 3.6; };
+
+// Cd efetivo = Cd do carro + arrasto induzido do downforce (Cl^2/(pi*e*AR))
+global.aero_cd = function() {
+    var _cd = global.cx;
+    if (is_undefined(_cd) || _cd <= 0) _cd = 0.35;
+    if (global.aero_forca_ind == 1) {
+        _cd += global.aero_k_ind * global.aero_cl * global.aero_cl;
+    }
+    return _cd;
+};
+
+global.aero_f_drag = function() {
+    var _v = global.aero_v();
+    return 0.5 * global.aero_rho * global.aero_cd() * global.area_frontal * _v * _v;
+};
+
+global.aero_f_down = function() {
+    if (global.aero_ativo != 1) return 0;
+    var _v = global.aero_v();
+    return 0.5 * global.aero_rho * global.aero_cl * global.area_frontal * _v * _v;
+};
+
+// carga vertical no pneu: peso + downforce
+global.aero_fz = function() {
+    return global.aero_massa() * global.aero_g + global.aero_f_down();
+};
+
+global.aero_f_roll = function() {
+    return global.aero_crr * global.aero_fz();
+};
+
+// arrasto total convertido para a escala de _desacel_arrasto
+global.aero_drag_units = function() {
+    if (global.aero_ativo != 1) return 0;
+    return (global.aero_f_drag() + global.aero_f_roll()) / (16.667 * global.aero_massa());
+};
+
+// potencia em W (global.hp em hp metrico)
+global.aero_power_w = function() {
+    if (is_undefined(global.hp) || global.hp <= 1) return 1;
+    return global.hp * 745.7;
+};
+
+// empuxo maximo que a potencia permite na velocidade atual, em unidades de _acceleration
+global.aero_thrust_units = function() {
+    if (global.aero_ativo != 1) return 999;
+    var _v = global.aero_v();
+    if (_v < 1) return 999;
+    var _a = global.aero_power_w() / (global.aero_massa() * _v);
+    return _a / 0.8333;
 };
 
 // ---- carburador: circuitos de lenta, agulha e borboleta ----
@@ -1452,6 +1527,10 @@ global.mod_dist_carregar = function() {
         global.dev_cash = ini_read_real(""dev"", ""cash"", 0);
         global.dev_cash_modo = ini_read_real(""dev"", ""cash_modo"", 0);
         global.cambio_gratis = ini_read_real(""dev"", ""cambio_gratis"", 0);
+        global.aero_cl = ini_read_real(""aero"", ""cl"", global.aero_cl);
+        global.aero_ativo = ini_read_real(""aero"", ""ativo"", global.aero_ativo);
+        global.aero_forca_ind = ini_read_real(""aero"", ""induzido"", global.aero_forca_ind);
+        global.aero_crr = ini_read_real(""aero"", ""crr"", global.aero_crr);
         ini_close();
     }
 };
@@ -1656,6 +1735,11 @@ if (instance_exists(obj_player) && global.kmh > 5) {
             + "" vmax="" + string(global.cambio_vmax)
             + "" torque="" + string(round(global.torque))
             + "" slip="" + string(round(global.phys_slip * 100))
+            + "" fdrag="" + string(round(global.aero_f_drag()))
+            + "" fdown="" + string(round(global.aero_f_down()))
+            + "" froll="" + string(round(global.aero_f_roll()))
+            + "" pacc="" + string(round(global.aero_thrust_units() * 100) / 100)
+            + "" cd="" + string(round(global.aero_cd() * 1000) / 1000)
             + "" at="" + string(global.car_data[global.vehicles_array].at));
     }
     draw_set_alpha(1);
@@ -1777,7 +1861,8 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "_desacel_arrasto *= _mod_mul
 // ===================================================================
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
-g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        global.cg_acc = _acceleration;\n        _target_speed = global.kmh + _acceleration;\n        if (global.kmh < global.cambio_vmax)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        _acceleration = min(_acceleration, global.aero_thrust_units());\n        global.cg_acc = _acceleration;\n        _target_speed = global.kmh + _acceleration;\n        if (global.kmh < global.cambio_vmax)", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "    var _forca_arrasto = 0.5 * _cx * _area_frontal * _densidade_ar * (_velocidade_ms * _velocidade_ms);\n    var _desacel_arrasto = _forca_arrasto / 25000;", "    var _desacel_arrasto = global.aero_drag_units();", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh -= (_desacel_arrasto * global.dt);", "global.kmh -= (_desacel_arrasto * global.dt);\nglobal.cg_drag = _desacel_arrasto;\nglobal.cg_fv = _fator_velocidade;", false);
 g.QueueFindReplace("gml_Object_obj_player_Collision_obj_ia_car_TOUGE", "clamp(global.kmh, 0, 400)", "clamp(global.kmh, 0, global.cambio_vmax)", true);
 g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Collision_obj_player", "clamp(global.kmh, 0, 400)", "clamp(global.kmh, 0, global.cambio_vmax)", true);
