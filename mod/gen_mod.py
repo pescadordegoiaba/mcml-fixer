@@ -1137,9 +1137,17 @@ global.pt_rpm_roda = function() {
     return global.kmh * _r * 16.667;
 };
 
+global.pt_gear_limit = function() {
+    var _r = global.pt_ratio(global.gear);
+    if (_r <= 0) return 0;
+    return ((global.car_data[global.vehicles_array].rpm / _r) * 60) / 1000;
+};
+
 global.pt_em_corte = function() {
+    // usa o rpm implicado pela velocidade na marcha ATUAL (nao o global.rpm,
+    // que pode estar velho depois de uma troca)
     var _red = global.car_data[global.vehicles_array].rpm;
-    return (global.rpm >= _red - 50) ? 1 : 0;
+    return (global.pt_rpm_roda() >= _red - 50) ? 1 : 0;
 };
 
 global.pt_step = function() {
@@ -1491,6 +1499,30 @@ VM3_NEW = _cq("""else if (global.kmh >= 400)
     }""")
 # ===================================================================
 
+PT_UP_MAN_OLD = _cq("""if (key_next && global.gear < max_gears)
+        {
+            global.gear += 1;""")
+PT_UP_MAN_NEW = _cq("""if (key_next && global.gear < max_gears)
+        {
+            global.gear += 1;
+            _gearlimit = global.pt_gear_limit();""")
+
+PT_UP_AUTO_OLD = _cq("""if (global.gear < max_gears)
+                {
+                    global.gear += 1;
+                    if (_gsd)""")
+PT_UP_AUTO_NEW = _cq("""if (global.gear < max_gears)
+                {
+                    global.gear += 1;
+                    _gearlimit = global.pt_gear_limit();
+                    if (_gsd)""")
+
+PT_BAND_OLD = _cq("_base_acceleration *= _power_band_mult;")
+PT_BAND_NEW = _cq("_power_band_mult = 1;")
+
+PT_SPEEDRES_OLD = _cq("var _speed_resistance = lerp(1, 0.5, _smooth_ratio);")
+PT_SPEEDRES_NEW = _cq("var _speed_resistance = 1;")
+
 PT_TARGET_OLD = _cq("""_target_speed = min(global.kmh + _acceleration, _gearlimit);
         if (global.kmh < _gearlimit)""")
 PT_TARGET_NEW = _cq("""_acceleration *= (1 - global.pt_em_corte());
@@ -1734,6 +1766,12 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM4_OLD}", "{VM4_NEW}", fal
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_TARGET_OLD}", "{PT_TARGET_NEW}", false);
+// upshift nao recalculava _gearlimit: o rpm nao caia na troca (bug do jogo)
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_UP_MAN_OLD}", "{PT_UP_MAN_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_UP_AUTO_OLD}", "{PT_UP_AUTO_NEW}", false);
+// limitadores artificiais que brigavam com a curva de torque
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_BAND_OLD}", "{PT_BAND_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_SPEEDRES_OLD}", "{PT_SPEEDRES_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_SHIFT_OLD}", "{PT_SHIFT_NEW}", true);
 
 g.Import();

@@ -439,6 +439,30 @@ A transmissão deixou de ser um mapa velocidade→giro e passou a seguir o model
 4. **Relação final entra na conta** como parte da relação total
    (`global.pt_ratio(gear)`, que já inclui `rel/3,73` desde o `obj_player Create`).
 
+**BUG do jogo corrigido (o motivo de "trocar de marcha e não acontecer nada"):**
+
+subir marcha **não** recalculava `_gearlimit` antes de recalcular o rpm
+(`05322:1174-1184`), enquanto descer marcha recalculava (`:1216-1218`). Como
+`rpm = (kmh / _gearlimit) × rpm_max`, o rpm continuava o da marcha anterior:
+trocava de marcha e o giro não caía. Com o giro preso em cima, o corte de giro
+(`pt_em_corte`) matava a aceleração e o carro parava no limite da 8ª de fábrica
+(329 km/h a 8500 rpm) — exatamente o "330 e não muda".
+
+Agora `global.pt_gear_limit()` recalcula o limite logo depois do `gear += 1`, nas
+duas caixas (manual `:1185` e automática `:2280`). Medido com a 8ª em 0,30:
+
+```
+7ª a 250 km/h -> 7916 rpm
+8ª a 250 km/h -> 1250 rpm   (antes: continuava 7916)
+```
+
+**Limitadores artificiais removidos**
+
+| Onde | O que fazia | Agora |
+|---|---|---|
+| `_power_band_mult` (`:1292`) | ×0,45 longe do "pico" — comia metade do torque em baixa | `1` (a curva de torque cuida) |
+| `_speed_resistance` (`:1347` e `:1427`) | `lerp(1, 0,5, sqrt(kmh/limit))` — cortava metade do empuxo perto do topo | `1` |
+
 **Consequência para o topo:** relação mais longa **não** cria potência. O carro para
 onde `empuxo = arrasto`; com a 8ª em 0,4 e relação 2,8 a razão total fica 0,30, o
 motor cai a ~1650 rpm em 330 km/h e não sobe mais — só a curva cheia dá o empuxo

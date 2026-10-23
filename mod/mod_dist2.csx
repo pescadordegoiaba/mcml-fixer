@@ -1147,9 +1147,17 @@ global.pt_rpm_roda = function() {
     return global.kmh * _r * 16.667;
 };
 
+global.pt_gear_limit = function() {
+    var _r = global.pt_ratio(global.gear);
+    if (_r <= 0) return 0;
+    return ((global.car_data[global.vehicles_array].rpm / _r) * 60) / 1000;
+};
+
 global.pt_em_corte = function() {
+    // usa o rpm implicado pela velocidade na marcha ATUAL (nao o global.rpm,
+    // que pode estar velho depois de uma troca)
     var _red = global.car_data[global.vehicles_array].rpm;
-    return (global.rpm >= _red - 50) ? 1 : 0;
+    return (global.pt_rpm_roda() >= _red - 50) ? 1 : 0;
 };
 
 global.pt_step = function() {
@@ -1458,6 +1466,12 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 250 &
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "_target_speed = min(global.kmh + _acceleration, _gearlimit);\n        if (global.kmh < _gearlimit)", "_acceleration *= (1 - global.pt_em_corte());\n        if (global.pt_shift_t > 0) _acceleration *= 0.15;\n        _target_speed = global.kmh + _acceleration;\n        if (global.kmh < global.cambio_vmax)", false);
+// upshift nao recalculava _gearlimit: o rpm nao caia na troca (bug do jogo)
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (key_next && global.gear < max_gears)\n        {\n            global.gear += 1;", "if (key_next && global.gear < max_gears)\n        {\n            global.gear += 1;\n            _gearlimit = global.pt_gear_limit();", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (global.gear < max_gears)\n                {\n                    global.gear += 1;\n                    if (_gsd)", "if (global.gear < max_gears)\n                {\n                    global.gear += 1;\n                    _gearlimit = global.pt_gear_limit();\n                    if (_gsd)", false);
+// limitadores artificiais que brigavam com a curva de torque
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "_base_acceleration *= _power_band_mult;", "_power_band_mult = 1;", true);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "var _speed_resistance = lerp(1, 0.5, _smooth_ratio);", "var _speed_resistance = 1;", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "play_audio(snd_gearchange);", "global.pt_shift_t = global.pt_shift_time; play_audio(snd_gearchange);", true);
 
 g.Import();
