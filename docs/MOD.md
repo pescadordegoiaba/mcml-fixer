@@ -712,7 +712,7 @@ faixa de velocidade: a curva é contínua.
 | induzido | `Cd_ef = Cd + Cl²/(π·e·AR)` | dentro do arrasto |
 | downforce | `½·ρ·Cl·A·v²` | carga do pneu (`phys_limite`) |
 | rolamento | `Crr·(m·g + downforce)` | `_desacel_arrasto` |
-| empuxo | `min(marcha, P/v)` | `_acceleration` |
+| empuxo | `min(marcha, P_pico/v)` | `_acceleration` |
 
 O Cd (`global.cx`) e a área (`global.area_frontal`) já vêm do jogo por carro
 (`GetCar.gml`: Cd 0,25–0,6 e A 1,8–2,3 m²).
@@ -727,6 +727,8 @@ O Cd (`global.cx`) e a área (`global.area_frontal`) já vêm do jogo por carro
 | 600 hp | 376 km/h |
 | 1000 hp | 442 km/h |
 | 1400 hp | 487 km/h |
+
+`P_pico` é `global.maxhp`, não o hp instantâneo: o jogo faz `hp = lerp(0, maxhp, rpm/red)`, e usar o instantâneo criava um laço (giro baixo → limite baixo → giro sobe devagar) que travava o motor da 3ª em diante.
 
 Para passar dos 500 é preciso potência ou menos área frontal — relação de câmbio longa
 sozinha não chega lá, porque o empuxo agora cai com `1/v`.

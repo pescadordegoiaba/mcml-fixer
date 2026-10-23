@@ -160,6 +160,7 @@ funções da camada e compara com `∛(2P/(ρCdA))`).
 | `froll` | rolamento em N |
 | `pacc` | empuxo máximo que a potência permite, em unidades de `_acceleration` |
 | `cd` | Cd efetivo (com induzido) |
+| `pacc_livre` | limite de potência (sonda `CAR`, uma vez por sessão) |
 | `acc` | aceleração realmente aplicada |
 
 Sinal de problema: `acc` travado em 21 com `pacc` baixo = o clamp de potência não está

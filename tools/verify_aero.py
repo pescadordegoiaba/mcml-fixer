@@ -48,6 +48,9 @@ ck("downforce_na_carga", "global.aero_f_down()" in lim)
 ck("empuxo_por_potencia", "_acceleration = min(_acceleration, global.aero_thrust_units());" in step)
 
 # --- sonda registra as forcas ---
+ck("potencia_pico", 'variable_global_exists("maxhp")' in init and "global.maxhp" in init)
+ck("potencia_falha_aberto", "_pw <= 0" in init)
+
 ck("sonda_aero", all(k in draw for k in ("fdrag=", "fdown=", "froll=", "pacc=", "cd=")))
 
 falhas = [c for c in checks if not c[1]]

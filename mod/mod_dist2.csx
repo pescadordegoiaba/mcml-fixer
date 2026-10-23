@@ -878,10 +878,18 @@ global.aero_drag_units = function() {
     return (global.aero_f_drag() + global.aero_f_roll()) / (16.667 * global.aero_massa());
 };
 
-// potencia em W (global.hp em hp metrico)
+// potencia em W. Usa a potencia de PICO (global.maxhp), nao a instantanea
+// (global.hp): o jogo faz hp = lerp(0, maxhp, rpm/red), entao logo depois de uma
+// troca o hp cai junto com o giro, o limite de potencia caia com ele e o motor
+// nao conseguia subir de volta (armadilha de realimentacao na 3a marcha em diante).
 global.aero_power_w = function() {
-    if (is_undefined(global.hp) || global.hp <= 1) return 1;
-    return global.hp * 745.7;
+    var _p = 0;
+    if (variable_global_exists(""maxhp"")) _p = global.maxhp;
+    if (is_undefined(_p) || _p < 20) {
+        if (is_undefined(global.hp) || global.hp < 20) return 0;
+        _p = global.hp;
+    }
+    return _p * 745.7;
 };
 
 // empuxo maximo que a potencia permite na velocidade atual, em unidades de _acceleration
@@ -889,7 +897,9 @@ global.aero_thrust_units = function() {
     if (global.aero_ativo != 1) return 999;
     var _v = global.aero_v();
     if (_v < 1) return 999;
-    var _a = global.aero_power_w() / (global.aero_massa() * _v);
+    var _pw = global.aero_power_w();
+    if (_pw <= 0) return 999;   // sem dado de potencia: falha aberto (nunca trava o carro)
+    var _a = _pw / (global.aero_massa() * _v);
     return _a / 0.8333;
 };
 
@@ -1181,6 +1191,7 @@ global.cambio_txt_rel = function() {
 global.cg_versao = 3;
 global.cg_migrado = 0;
 global.cg_probe_t = 0;
+global.cg_car_t = 0;
 global.cg_acc = 0;
 global.cg_drag = 0;
 global.cg_fv = 1;
@@ -1720,6 +1731,19 @@ if (instance_exists(obj_player) && global.kmh > 5) {
     draw_set_alpha(0.8);
     draw_set_color(c_white);
     draw_text_transformed(12, 12, _txt, 0.6, 0.6, 0);
+    // sonda do carro: uma linha por sessao, com o que a aero usa de verdade
+    if (instance_exists(obj_player) && global.cg_car_t == 0 && global.kmh > 2) {
+        global.cg_car_t = 1;
+        var _s_mhp = variable_global_exists(""maxhp"") ? global.maxhp : 0;
+        var _s_mtq = variable_global_exists(""maxtorque"") ? global.maxtorque : 0;
+        global.cg_diag(""CAR hp="" + string(round(global.hp)) + "" maxhp="" + string(round(_s_mhp))
+            + "" torque="" + string(round(global.torque)) + "" maxtorque="" + string(round(_s_mtq))
+            + "" peso="" + string(global.weight) + "" cx="" + string(global.cx)
+            + "" area="" + string(global.area_frontal) + "" m="" + string(round(global.aero_massa()))
+            + "" cd="" + string(round(global.aero_cd() * 1000) / 1000)
+            + "" pacc_livre="" + string(round(global.aero_thrust_units() * 10) / 10)
+            + "" v_topo="" + string(round(power((2 * global.aero_power_w()) / (global.aero_rho * global.aero_cd() * global.area_frontal), 1 / 3) * 3.6)));
+    }
     // sonda do topo: registra o que limita acima de 300 km/h
     if (global.kmh > 300 && current_time - global.cg_probe_t > 400) {
         global.cg_probe_t = current_time;

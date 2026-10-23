@@ -23,11 +23,13 @@ string gml = @"if (!variable_global_exists(""aet"")) {
     var _ar_old = variable_global_exists(""area_frontal"") ? global.area_frontal : 2.0;
     var _w_old = variable_global_exists(""weight"") ? global.weight : 1.3;
     var _hp_old = variable_global_exists(""hp"") ? global.hp : 100;
+    var _mhp_old = variable_global_exists(""maxhp"") ? global.maxhp : 100;
     var _cl_old = global.aero_cl;
     var _ind_old = global.aero_forca_ind; var _crr_old = global.aero_crr;
 
     // carro de referencia: Cd 0.32, A 2.0, 1300 kg
     global.cx = 0.32; global.area_frontal = 2.0; global.weight = 1.3; global.hp = 600;
+    global.maxhp = 600;
     global.aero_cl = 0; global.aero_forca_ind = 0; global.aero_crr = 0;
 
     // 1 e 2: arrasto cresce com v^2
@@ -79,9 +81,24 @@ string gml = @"if (!variable_global_exists(""aet"")) {
     }
     _chk(""topo_com_perdas"", (_topo2 * 3.6) < (_topo * 3.6) - 5 && (_topo2 * 3.6) > 330, ""<"" + string(_topo * 3.6), _topo2 * 3.6);
 
+    // 10: armadilha de realimentacao - hp instantaneo baixo (logo apos a troca) NAO pode
+    // derrubar o limite de potencia, senao o motor nao sobe de giro de novo
+    global.aero_forca_ind = 0; global.aero_crr = 0;
+    global.maxhp = 600; global.hp = 60;      // 10% do pico: como fica em giro baixo
+    global.kmh = 150;
+    _chk(""potencia_pico"", abs(global.aero_thrust_units() - 9.91) < 0.5, 9.91, global.aero_thrust_units());
+
+    // 11: e o hp instantaneo baixo nao pode fazer o topo desabar
+    _chk(""topo_nao_desaba"", abs(global.aero_power_w() - 447420) < 100, 447420, global.aero_power_w());
+
+    // 12: sem dado de potencia a camada falha ABERTO (nunca trava o carro)
+    global.maxhp = 0; global.hp = 0;
+    global.kmh = 200;
+    _chk(""falha_aberto"", global.aero_thrust_units() >= 999, ""999+"", global.aero_thrust_units());
+
     // restaura
     global.kmh = _kmh_old; global.cx = _cx_old; global.area_frontal = _ar_old;
-    global.weight = _w_old; global.hp = _hp_old; global.aero_cl = _cl_old;
+    global.weight = _w_old; global.hp = _hp_old; global.maxhp = _mhp_old; global.aero_cl = _cl_old;
     global.aero_forca_ind = _ind_old; global.aero_crr = _crr_old;
 
     var _h2 = file_text_open_append(""aero_test.txt"");

@@ -678,3 +678,35 @@ editável no ini (`[aero] cl`, `ativo`, `induzido`, `crr`).
 **Prova (rodando):** `mod/aero_test.csx` 9/9 — inclusive `topo_simulado`, que refaz a
 busca do equilíbrio com as duas escalas e tem que bater o valor analítico
 (`v = ∛(2P/(ρCdA))` = 376 km/h para 600 hp, CdA 0,64).
+
+## BUG 27 — o limite de potência realimentava o giro (3ª marcha em diante)
+
+Depois da 3.2.0 o carro não subia de RPM a partir da 3ª. Causa: `aero_power_w()`
+usava `global.hp`, e o jogo calcula
+
+```gml
+global.hp = lerp(0, global.maxhp, global.rpm / red);   // 05322:1051
+```
+
+ou seja **hp é proporcional ao giro**. Logo depois de uma troca o giro cai, o hp cai,
+o limite `P/(m·v)` cai junto — e como a aceleração é quem sobe o giro, o carro entra
+num laço: giro baixo → limite baixo → giro sobe devagar → continua em giro baixo.
+
+Em 1ª e 2ª o termo `P/v` é enorme (v pequeno) e o clamp `_max_acc = 21` domina, então
+o problema não aparecia. Da 3ª em diante `P/v` passa a mandar e o laço trava o motor.
+
+Medido no harness (600 hp, 1300 kg, 150 km/h):
+
+| potência usada | limite em unidades de `_acceleration` |
+|---|---|
+| `global.hp` = 60 (10 % do pico) | **0,99** — motor morto |
+| `global.maxhp` = 600 | **9,91** |
+
+**Correção (3.2.1):** o limite usa a potência **de pico** (`global.maxhp`), que é o
+envelope físico do motor — em qualquer rotação o carro pode entregar até isso, e a
+curva de torque continua mandando no resto. Se não houver dado de potência, a camada
+falha **aberta** (retorna 999, sem limite) em vez de travar o carro.
+
+Provas: `mod/aero_test.csx` casos `potencia_pico` e `falha_aberto` (12/12);
+`verify_aero.py` 12/12; sonda `CAR` registra `maxhp`, `pacc_livre` e `v_topo` na
+primeira vez que o carro anda.
