@@ -1049,6 +1049,48 @@ global.mod_dist_ui = function() {
     draw_set_color(c_white);
 };
 
+// ---- cambio: relacao final, limites de ajuste e teto de velocidade ----
+global.cambio_rel_min = 2.60;
+global.cambio_rel_max = 5.10;
+global.cambio_rel_ref = 3.73;
+global.cambio_passo = 0.01;
+global.cambio_limite_pct = 0.70;
+global.cambio_vmax = 500;
+global.cambio_custo = 775;
+
+global.cambio_cfg = function() {
+    return { rel_min: global.cambio_rel_min, rel_max: global.cambio_rel_max,
+             rel_ref: global.cambio_rel_ref, passo: global.cambio_passo,
+             custo: global.cambio_custo };
+};
+
+global.cambio_rel_valor = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return global.cambio_rel_ref;
+    if (!variable_struct_exists(car, "relacao_final")) return global.cambio_rel_ref;
+    var _r = car.relacao_final;
+    if (!is_real(_r) || _r <= 0) return global.cambio_rel_ref;
+    return clamp(_r, global.cambio_rel_min, global.cambio_rel_max);
+};
+
+global.cambio_rel_mult = function() {
+    if (global.cambio_rel_ref <= 0) return 1;
+    return global.cambio_rel_valor() / global.cambio_rel_ref;
+};
+
+global.cambio_txt_rel = function() {
+    switch (global.idioma) {
+        case 1: return "FINAL DRIVE";
+        case 2: return "RELACION FINAL";
+        case 3: return "RAPPORTO FINALE";
+        case 4: return "RAPPORT FINAL";
+        case 5: return "主减速比";
+        case 6: return "ГЛАВНАЯ ПАРА";
+        case 7: return "ファイナル";
+        default: return "RELAÇÃO FINAL";
+    }
+};
+
 global.mod_dist_carregar = function() {
     // o ini define os PADROES de uma compra nova; cada carro guarda a sua config
     if (file_exists("mod_distribuidor.ini")) {
@@ -1068,6 +1110,13 @@ global.mod_dist_carregar = function() {
         global.phys_def.share = ini_read_real("fisica", "share", global.phys_def.share);
         global.phys_def.embreagem = ini_read_real("fisica", "embreagem", global.phys_def.embreagem);
         global.phys_def.inercia = ini_read_real("fisica", "inercia", global.phys_def.inercia);
+        global.cambio_rel_min = ini_read_real("cambio", "rel_min", global.cambio_rel_min);
+        global.cambio_rel_max = ini_read_real("cambio", "rel_max", global.cambio_rel_max);
+        global.cambio_rel_ref = ini_read_real("cambio", "rel_ref", global.cambio_rel_ref);
+        global.cambio_passo = ini_read_real("cambio", "passo", global.cambio_passo);
+        global.cambio_limite_pct = ini_read_real("cambio", "limite_pct", global.cambio_limite_pct);
+        global.cambio_vmax = ini_read_real("cambio", "vmax", global.cambio_vmax);
+        global.cambio_custo = ini_read_real("cambio", "custo", global.cambio_custo);
         global.mod_rev = ini_read_real("mod", "rev", 0);
         global.dev_cash = ini_read_real("dev", "cash", 0);
         global.dev_cash_modo = ini_read_real("dev", "cash_modo", 0);
@@ -1208,6 +1257,180 @@ struct_get_from_hash(global.item_db, variable_get_hash("auto_6m")).campo_val = 6
 struct_get_from_hash(global.item_db, variable_get_hash("gsd_6m")).campo_val = 7;
 struct_get_from_hash(global.item_db, variable_get_hash("manual_7m")).campo_val = 8;
 struct_get_from_hash(global.item_db, variable_get_hash("manual_8m")).campo_val = 9;""")
+
+# ================= CAMBIO: relacao final + limites =================
+REL_SCHEMA_OLD = _cq("data.gears_mod = [];")
+REL_SCHEMA_NEW = _cq("data.gears_mod = [];\ndata.relacao_final = 3.73;")
+
+REL_CREATE_OLD = _cq("max_gears = array_length(gear_ratios);")
+REL_CREATE_NEW = _cq("""max_gears = array_length(gear_ratios);
+var _rel_final = 1;
+if (variable_struct_exists(global.car_data[global.vehicles_array], "relacao_final")) {
+    var _rf_tmp = global.car_data[global.vehicles_array].relacao_final;
+    if (is_real(_rf_tmp) && _rf_tmp > 0) {
+        _rel_final = clamp(_rf_tmp, global.cambio_rel_min, global.cambio_rel_max) / global.cambio_rel_ref;
+    }
+}
+if (_rel_final != 1) {
+    for (var _ri = 0; _ri < max_gears; _ri++) {
+        gear_ratios[_ri] = gear_ratios[_ri] * _rel_final;
+        if (_ri < array_length(original_ratios)) {
+            original_ratios[_ri] = original_ratios[_ri] * _rel_final;
+        }
+    }
+}""")
+
+LIM_OLD = _cq("""                if (arg0 == 0)
+                {
+                    return 1;
+                }
+                else if (arg0 >= 4)
+                {
+                    return 0.2;
+                }
+                else
+                {
+                    return 0.5;
+                }""")
+LIM_NEW = _cq("""                return global.cambio_limite_pct;""")
+
+LIM_USE_OLD = _cq("""                var _limite = get_limite_marcha(i, obj_player.max_gears);
+                var _valor_min = _gear_original[i] - _limite;
+                var _valor_max = _gear_original[i] + _limite;""")
+LIM_USE_NEW = _cq("""                var _limite = max(0.3, _gear_original[i] * get_limite_marcha(i, obj_player.max_gears));
+                var _valor_min = max(0.3, _gear_original[i] - _limite);
+                var _valor_max = _gear_original[i] + _limite;""")
+
+REL_INIT_OLD = _cq("""                global.gear_selecionada = 0;
+                global.gear_editando = false;
+                global.gear_area_botoes = false;
+                global.gear_botao_selecionado = 0;
+            }""")
+REL_INIT_NEW = _cq("""                global.gear_selecionada = 0;
+                global.gear_editando = false;
+                global.gear_area_botoes = false;
+                global.gear_botao_selecionado = 0;
+                global.gear_temp_rel = global.cambio_rel_valor();
+                global.gear_rel_original = global.gear_temp_rel;
+            }""")
+
+REL_COUNT_OLD = _cq("            var _custo_cambio = 775 * _marchas_modificadas;")
+REL_COUNT_NEW = _cq("""            if (abs(global.gear_temp_rel - global.gear_rel_original) > 0.005)
+            {
+                _marchas_modificadas++;
+            }
+            var _custo_cambio = global.cambio_custo * _marchas_modificadas;""")
+
+REL_NAV_OLD = _cq("global.gear_selecionada = min(global.gear_selecionada + 1, obj_player.max_gears - 1);")
+REL_NAV_NEW = _cq("global.gear_selecionada = min(global.gear_selecionada + 1, obj_player.max_gears);")
+
+REL_ROW_OLD = _cq("""                    draw_set_halign(fa_center);
+                    draw_set_color(c_yellow);
+                    draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);
+                }
+            }
+            draw_set_halign(fa_left);
+            draw_set_color(c_white);
+            draw_text(_notebook_x - 290, _notebook_y + 150, txt_custo);""")
+
+REL_ROW_NEW = _cq("""                    draw_set_halign(fa_center);
+                    draw_set_color(c_yellow);
+                    draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);
+                }
+            }
+            var _rel_idx = obj_player.max_gears;
+            var _y_rel = _start_y + (obj_player.max_gears * _spacing) + 8;
+            var _rel_min = global.cambio_cfg().rel_min;
+            var _rel_max = global.cambio_cfg().rel_max;
+            var _rel_cor = (!global.gear_area_botoes && global.gear_selecionada == _rel_idx && !global.gear_editando) ? global.red : 16777215;
+            if (global.gear_selecionada == _rel_idx && global.gear_editando) _rel_cor = global.gold;
+            draw_set_halign(fa_left);
+            draw_set_color(_rel_cor);
+            draw_set_font(NotoSans);
+            draw_text(_marcha_x, _y_rel, global.cambio_txt_rel() + ":");
+            draw_set_color(c_gray);
+            draw_text(_notebook_x - 180, _y_rel, string_format(global.gear_rel_original, 2, 2));
+            if (abs(global.gear_temp_rel - global.gear_rel_original) > 0.005)
+            {
+                draw_set_color(c_yellow);
+                draw_text(_notebook_x - 130, _y_rel, ">");
+            }
+            draw_set_color((abs(global.gear_temp_rel - global.gear_rel_original) > 0.005) ? 65280 : 16777215);
+            draw_text(_notebook_x - 100, _y_rel, string_format(global.gear_temp_rel, 2, 2));
+            var _rbar_x = _notebook_x + 50;
+            draw_set_color(c_dkgray);
+            draw_roundrect(_rbar_x, _y_rel - 6, _rbar_x + 200, _y_rel + 6, false);
+            var _rpct = (global.gear_temp_rel - _rel_min) / (_rel_max - _rel_min);
+            draw_set_color(_rel_cor);
+            draw_circle(_rbar_x + (_rpct * 200), _y_rel, 8, false);
+            draw_set_color(c_black);
+            draw_circle(_rbar_x + (_rpct * 200), _y_rel, 8, true);
+            var _rhover = point_in_rectangle(mouse_x, mouse_y, _rbar_x, _y_rel - 15, _rbar_x + 200, _y_rel + 15);
+            if (mouse_check_button_pressed(mb_left) && _rhover)
+            {
+                global.gear_selecionada = _rel_idx;
+                global.gear_editando = true;
+                global.gear_area_botoes = false;
+            }
+            if (global.gear_editando && global.gear_selecionada == _rel_idx && mouse_check_button(mb_left) && _rhover)
+            {
+                var _rn = _rel_min + (clamp((mouse_x - _rbar_x) / 200, 0, 1) * (_rel_max - _rel_min));
+                global.gear_temp_rel = round(_rn * 100) / 100;
+            }
+            if (global.gear_editando && global.gear_selecionada == _rel_idx)
+            {
+                if (keyboard_check_pressed(vk_left)) global.gear_temp_rel = max(global.gear_temp_rel - global.cambio_passo, _rel_min);
+                if (keyboard_check_pressed(vk_right)) global.gear_temp_rel = min(global.gear_temp_rel + global.cambio_passo, _rel_max);
+                draw_set_halign(fa_center);
+                draw_set_color(c_yellow);
+                draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);
+            }
+            draw_set_halign(fa_left);
+            draw_set_color(c_white);
+            draw_text(_notebook_x - 290, _notebook_y + 176, txt_custo);""")
+
+REL_COST_OLD = _cq('draw_text(_notebook_x + 80, _notebook_y + 150, "$" + string(floor(_custo_cambio)));')
+REL_COST_NEW = _cq('draw_text(_notebook_x + 80, _notebook_y + 176, "$" + string(floor(_custo_cambio)));')
+
+REL_DBG_OLD = _cq('draw_text_transformed(_notebook_x, _notebook_y + 110, t + string(global.car_data[global.vehicles_array].gears_mod), 1, 1, 0);')
+REL_DBG_NEW = _cq('draw_text_transformed(_notebook_x, _notebook_y + 200, t + string(global.car_data[global.vehicles_array].gears_mod) + "  |  " + global.cambio_txt_rel() + ": " + string(global.car_data[global.vehicles_array].relacao_final), 1, 1, 0);')
+
+REL_SAVE1_OLD = _cq("global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];")
+REL_SAVE1_NEW = _cq("global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original;")
+REL_SAVE2_OLD = _cq("obj_player.gear_ratios[i] = global.gear_temp_array[i];")
+REL_SAVE2_NEW = _cq("obj_player.gear_ratios[i] = (global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original) * (global.gear_temp_rel / global.cambio_rel_ref);")
+REL_SAVE3_OLD = _cq("global.car_data[global.vehicles_array].cambio_mod = 1;")
+REL_SAVE3_NEW = _cq("global.car_data[global.vehicles_array].cambio_mod = 1;\nglobal.car_data[global.vehicles_array].relacao_final = global.gear_temp_rel;")
+
+VM1_OLD = _cq("""if (_gearlimit > 400)
+{
+    _gearlimit = 400;
+}
+if (global.kmh > 400)
+{
+    global.kmh = 400;
+}""")
+VM1_NEW = _cq("""if (_gearlimit > global.cambio_vmax)
+{
+    _gearlimit = global.cambio_vmax;
+}
+if (global.kmh > global.cambio_vmax)
+{
+    global.kmh = global.cambio_vmax;
+}""")
+VM2_OLD = _cq("global.kmh = clamp(global.kmh, 0, 400);")
+VM2_NEW = _cq("global.kmh = clamp(global.kmh, 0, global.cambio_vmax);")
+VM4_OLD = _cq("else if (global.kmh >= 250 && global.kmh < 300)")
+VM4_NEW = _cq("else if (global.kmh >= 250 && global.kmh < 400)")
+VM3_OLD = _cq("""else if (global.kmh >= 300)
+    {
+        _fator_velocidade = 3.2;
+    }""")
+VM3_NEW = _cq("""else if (global.kmh >= 400)
+    {
+        _fator_velocidade = 3.2;
+    }""")
+# ===================================================================
 
 PATCH = f'''using System;
 using UndertaleModLib;
@@ -1419,6 +1642,26 @@ g.QueueFindReplace("gml_GlobalScript_Inventory", "{CK_OLD}", "{CK_NEW}", false);
 // ---- BUG 18: campo_val real (1..9) para _inventory_get_item_by_campo("cambio") ----
 // sem campo_val ele compara posicao 0-based com cambio 1-based e nunca acha
 g.QueueFindReplace("gml_GlobalScript_Inventory", "{CV_OLD}", "{CV_NEW}", false);
+
+// ================= CAMBIO: relacao final + limites =================
+g.QueueFindReplace("gml_GlobalScript_EstruturaSalvamento", "{REL_SCHEMA_OLD}", "{REL_SCHEMA_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Create_0", "{REL_CREATE_OLD}", "{REL_CREATE_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{LIM_OLD}", "{LIM_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{LIM_USE_OLD}", "{LIM_USE_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_INIT_OLD}", "{REL_INIT_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_COUNT_OLD}", "{REL_COUNT_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_NAV_OLD}", "{REL_NAV_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_ROW_OLD}", "{REL_ROW_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_COST_OLD}", "{REL_COST_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_DBG_OLD}", "{REL_DBG_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_SAVE1_OLD}", "{REL_SAVE1_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_SAVE2_OLD}", "{REL_SAVE2_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_SAVE3_OLD}", "{REL_SAVE3_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM1_OLD}", "{VM1_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM2_OLD}", "{VM2_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM3_OLD}", "{VM3_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM4_OLD}", "{VM4_NEW}", false);
+// ===================================================================
 
 g.Import();
 ScriptMessage("MARK distribuidor=v2 instalado");

@@ -384,6 +384,32 @@ depende de `use_func` no item, que é atribuído **só** pelo laço `_cambio_key
 passa de 35 para 26 px quando há mais de 6 marchas, senão a 8ª linha invade o texto de
 custo.
 
+**Quanto cada marcha pode variar:** o original travava em ±1,0 na 1ª, ±0,5 na 2ª–4ª e
+**±0,2 da 5ª em diante** — com a 8ª em 1,55 o jogador só mexia entre 1,35 e 1,75. Agora
+é **±70% do valor original em todas** (`[cambio] limite_pct`), com piso de 0,3: a 8ª
+passa a variar de 0,47 a 2,64.
+
+**Relação final (2.7.0):** uma linha extra no fim da lista do caderno, com barra e
+setas, faixa **2,60 a 5,10** e passo 0,01 (default 3,73 = neutro). O valor real é
+dividido pela referência 3,73 e multiplicado em `gear_ratios` **uma vez**, no
+`obj_player Create` — então `_gearlimit`, a física `F = T·g/r` e as IAs já enxergam a
+relação efetiva sem fórmula nova. Menor = mais longo (mais topo), maior = mais curto
+(mais arrancada):
+
+| relação final | multiplicador | 8ª efetiva | topo (corte 7500) |
+|---|---|---|---|
+| 2,60 | 0,697 | 1,08 | 416 km/h |
+| 3,73 | 1,000 | 1,55 | 290 km/h |
+| 5,10 | 1,367 | 2,12 | 212 km/h |
+
+Para não compor multiplicação entre sessões, `gears_mod` guarda a razão **base**
+(sem a relação final) e o editor divide pela relação antiga ao salvar. Custo: 775,
+igual a uma marcha alterada.
+
+**Teto de velocidade:** era 400 km/h fixo (`_gearlimit` e `global.kmh`) com arrasto
+máximo a partir de 300. Virou `[cambio] vmax` (500) e o arrasto máximo subiu para
+400 km/h — sem isso a relação final longa não teria efeito.
+
 ## 7. Punições por tunar: removidas
 
 

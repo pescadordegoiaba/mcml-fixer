@@ -1610,6 +1610,48 @@ global.mod_dist_ui = function() {
     draw_set_color(c_white);
 };
 
+// ---- cambio: relacao final, limites de ajuste e teto de velocidade ----
+global.cambio_rel_min = 2.60;
+global.cambio_rel_max = 5.10;
+global.cambio_rel_ref = 3.73;
+global.cambio_passo = 0.01;
+global.cambio_limite_pct = 0.70;
+global.cambio_vmax = 500;
+global.cambio_custo = 775;
+
+global.cambio_cfg = function() {
+    return { rel_min: global.cambio_rel_min, rel_max: global.cambio_rel_max,
+             rel_ref: global.cambio_rel_ref, passo: global.cambio_passo,
+             custo: global.cambio_custo };
+};
+
+global.cambio_rel_valor = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return global.cambio_rel_ref;
+    if (!variable_struct_exists(car, ""relacao_final"")) return global.cambio_rel_ref;
+    var _r = car.relacao_final;
+    if (!is_real(_r) || _r <= 0) return global.cambio_rel_ref;
+    return clamp(_r, global.cambio_rel_min, global.cambio_rel_max);
+};
+
+global.cambio_rel_mult = function() {
+    if (global.cambio_rel_ref <= 0) return 1;
+    return global.cambio_rel_valor() / global.cambio_rel_ref;
+};
+
+global.cambio_txt_rel = function() {
+    switch (global.idioma) {
+        case 1: return ""FINAL DRIVE"";
+        case 2: return ""RELACION FINAL"";
+        case 3: return ""RAPPORTO FINALE"";
+        case 4: return ""RAPPORT FINAL"";
+        case 5: return ""主减速比"";
+        case 6: return ""ГЛАВНАЯ ПАРА"";
+        case 7: return ""ファイナル"";
+        default: return ""RELAÇÃO FINAL"";
+    }
+};
+
 global.mod_dist_carregar = function() {
     // o ini define os PADROES de uma compra nova; cada carro guarda a sua config
     if (file_exists(""mod_distribuidor.ini"")) {
@@ -1629,6 +1671,13 @@ global.mod_dist_carregar = function() {
         global.phys_def.share = ini_read_real(""fisica"", ""share"", global.phys_def.share);
         global.phys_def.embreagem = ini_read_real(""fisica"", ""embreagem"", global.phys_def.embreagem);
         global.phys_def.inercia = ini_read_real(""fisica"", ""inercia"", global.phys_def.inercia);
+        global.cambio_rel_min = ini_read_real(""cambio"", ""rel_min"", global.cambio_rel_min);
+        global.cambio_rel_max = ini_read_real(""cambio"", ""rel_max"", global.cambio_rel_max);
+        global.cambio_rel_ref = ini_read_real(""cambio"", ""rel_ref"", global.cambio_rel_ref);
+        global.cambio_passo = ini_read_real(""cambio"", ""passo"", global.cambio_passo);
+        global.cambio_limite_pct = ini_read_real(""cambio"", ""limite_pct"", global.cambio_limite_pct);
+        global.cambio_vmax = ini_read_real(""cambio"", ""vmax"", global.cambio_vmax);
+        global.cambio_custo = ini_read_real(""cambio"", ""custo"", global.cambio_custo);
         global.mod_rev = ini_read_real(""mod"", ""rev"", 0);
         global.dev_cash = ini_read_real(""dev"", ""cash"", 0);
         global.dev_cash_modo = ini_read_real(""dev"", ""cash_modo"", 0);
@@ -1879,6 +1928,26 @@ g.QueueFindReplace("gml_GlobalScript_Inventory", "var _cambio_keys = [\"transmis
 // sem campo_val ele compara posicao 0-based com cambio 1-based e nunca acha
 g.QueueFindReplace("gml_GlobalScript_Inventory", "_r(\"manual_8m\", \"Manual 8 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");", "_r(\"manual_8m\", \"Manual 8 Marchas\", \"cambio\", \"un\", 1, \"spr_venture_externa\", 6, \"cambio\", \"\");\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_4m\")).campo_val = 1;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_5m\")).campo_val = 2;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_6m\")).campo_val = 3;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"auto_4m\")).campo_val = 4;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"auto_5m\")).campo_val = 5;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"auto_6m\")).campo_val = 6;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"gsd_6m\")).campo_val = 7;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_7m\")).campo_val = 8;\nstruct_get_from_hash(global.item_db, variable_get_hash(\"manual_8m\")).campo_val = 9;", false);
 
+// ================= CAMBIO: relacao final + limites =================
+g.QueueFindReplace("gml_GlobalScript_EstruturaSalvamento", "data.gears_mod = [];", "data.gears_mod = [];\ndata.relacao_final = 3.73;", false);
+g.QueueFindReplace("gml_Object_obj_player_Create_0", "max_gears = array_length(gear_ratios);", "max_gears = array_length(gear_ratios);\nvar _rel_final = 1;\nif (variable_struct_exists(global.car_data[global.vehicles_array], \"relacao_final\")) {\n    var _rf_tmp = global.car_data[global.vehicles_array].relacao_final;\n    if (is_real(_rf_tmp) && _rf_tmp > 0) {\n        _rel_final = clamp(_rf_tmp, global.cambio_rel_min, global.cambio_rel_max) / global.cambio_rel_ref;\n    }\n}\nif (_rel_final != 1) {\n    for (var _ri = 0; _ri < max_gears; _ri++) {\n        gear_ratios[_ri] = gear_ratios[_ri] * _rel_final;\n        if (_ri < array_length(original_ratios)) {\n            original_ratios[_ri] = original_ratios[_ri] * _rel_final;\n        }\n    }\n}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                if (arg0 == 0)\n                {\n                    return 1;\n                }\n                else if (arg0 >= 4)\n                {\n                    return 0.2;\n                }\n                else\n                {\n                    return 0.5;\n                }", "                return global.cambio_limite_pct;", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                var _limite = get_limite_marcha(i, obj_player.max_gears);\n                var _valor_min = _gear_original[i] - _limite;\n                var _valor_max = _gear_original[i] + _limite;", "                var _limite = max(0.3, _gear_original[i] * get_limite_marcha(i, obj_player.max_gears));\n                var _valor_min = max(0.3, _gear_original[i] - _limite);\n                var _valor_max = _gear_original[i] + _limite;", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                global.gear_selecionada = 0;\n                global.gear_editando = false;\n                global.gear_area_botoes = false;\n                global.gear_botao_selecionado = 0;\n            }", "                global.gear_selecionada = 0;\n                global.gear_editando = false;\n                global.gear_area_botoes = false;\n                global.gear_botao_selecionado = 0;\n                global.gear_temp_rel = global.cambio_rel_valor();\n                global.gear_rel_original = global.gear_temp_rel;\n            }", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "            var _custo_cambio = 775 * _marchas_modificadas;", "            if (abs(global.gear_temp_rel - global.gear_rel_original) > 0.005)\n            {\n                _marchas_modificadas++;\n            }\n            var _custo_cambio = global.cambio_custo * _marchas_modificadas;", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "global.gear_selecionada = min(global.gear_selecionada + 1, obj_player.max_gears - 1);", "global.gear_selecionada = min(global.gear_selecionada + 1, obj_player.max_gears);", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "                    draw_set_halign(fa_center);\n                    draw_set_color(c_yellow);\n                    draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);\n                }\n            }\n            draw_set_halign(fa_left);\n            draw_set_color(c_white);\n            draw_text(_notebook_x - 290, _notebook_y + 150, txt_custo);", "                    draw_set_halign(fa_center);\n                    draw_set_color(c_yellow);\n                    draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);\n                }\n            }\n            var _rel_idx = obj_player.max_gears;\n            var _y_rel = _start_y + (obj_player.max_gears * _spacing) + 8;\n            var _rel_min = global.cambio_cfg().rel_min;\n            var _rel_max = global.cambio_cfg().rel_max;\n            var _rel_cor = (!global.gear_area_botoes && global.gear_selecionada == _rel_idx && !global.gear_editando) ? global.red : 16777215;\n            if (global.gear_selecionada == _rel_idx && global.gear_editando) _rel_cor = global.gold;\n            draw_set_halign(fa_left);\n            draw_set_color(_rel_cor);\n            draw_set_font(NotoSans);\n            draw_text(_marcha_x, _y_rel, global.cambio_txt_rel() + \":\");\n            draw_set_color(c_gray);\n            draw_text(_notebook_x - 180, _y_rel, string_format(global.gear_rel_original, 2, 2));\n            if (abs(global.gear_temp_rel - global.gear_rel_original) > 0.005)\n            {\n                draw_set_color(c_yellow);\n                draw_text(_notebook_x - 130, _y_rel, \">\");\n            }\n            draw_set_color((abs(global.gear_temp_rel - global.gear_rel_original) > 0.005) ? 65280 : 16777215);\n            draw_text(_notebook_x - 100, _y_rel, string_format(global.gear_temp_rel, 2, 2));\n            var _rbar_x = _notebook_x + 50;\n            draw_set_color(c_dkgray);\n            draw_roundrect(_rbar_x, _y_rel - 6, _rbar_x + 200, _y_rel + 6, false);\n            var _rpct = (global.gear_temp_rel - _rel_min) / (_rel_max - _rel_min);\n            draw_set_color(_rel_cor);\n            draw_circle(_rbar_x + (_rpct * 200), _y_rel, 8, false);\n            draw_set_color(c_black);\n            draw_circle(_rbar_x + (_rpct * 200), _y_rel, 8, true);\n            var _rhover = point_in_rectangle(mouse_x, mouse_y, _rbar_x, _y_rel - 15, _rbar_x + 200, _y_rel + 15);\n            if (mouse_check_button_pressed(mb_left) && _rhover)\n            {\n                global.gear_selecionada = _rel_idx;\n                global.gear_editando = true;\n                global.gear_area_botoes = false;\n            }\n            if (global.gear_editando && global.gear_selecionada == _rel_idx && mouse_check_button(mb_left) && _rhover)\n            {\n                var _rn = _rel_min + (clamp((mouse_x - _rbar_x) / 200, 0, 1) * (_rel_max - _rel_min));\n                global.gear_temp_rel = round(_rn * 100) / 100;\n            }\n            if (global.gear_editando && global.gear_selecionada == _rel_idx)\n            {\n                if (keyboard_check_pressed(vk_left)) global.gear_temp_rel = max(global.gear_temp_rel - global.cambio_passo, _rel_min);\n                if (keyboard_check_pressed(vk_right)) global.gear_temp_rel = min(global.gear_temp_rel + global.cambio_passo, _rel_max);\n                draw_set_halign(fa_center);\n                draw_set_color(c_yellow);\n                draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);\n            }\n            draw_set_halign(fa_left);\n            draw_set_color(c_white);\n            draw_text(_notebook_x - 290, _notebook_y + 176, txt_custo);", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "draw_text(_notebook_x + 80, _notebook_y + 150, \"$\" + string(floor(_custo_cambio)));", "draw_text(_notebook_x + 80, _notebook_y + 176, \"$\" + string(floor(_custo_cambio)));", true);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "draw_text_transformed(_notebook_x, _notebook_y + 110, t + string(global.car_data[global.vehicles_array].gears_mod), 1, 1, 0);", "draw_text_transformed(_notebook_x, _notebook_y + 200, t + string(global.car_data[global.vehicles_array].gears_mod) + \"  |  \" + global.cambio_txt_rel() + \": \" + string(global.car_data[global.vehicles_array].relacao_final), 1, 1, 0);", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i];", "global.car_data[global.vehicles_array].gears_mod[i] = global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original;", true);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "obj_player.gear_ratios[i] = global.gear_temp_array[i];", "obj_player.gear_ratios[i] = (global.gear_temp_array[i] * global.cambio_rel_ref / global.gear_rel_original) * (global.gear_temp_rel / global.cambio_rel_ref);", true);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "global.car_data[global.vehicles_array].cambio_mod = 1;", "global.car_data[global.vehicles_array].cambio_mod = 1;\nglobal.car_data[global.vehicles_array].relacao_final = global.gear_temp_rel;", true);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (_gearlimit > 400)\n{\n    _gearlimit = 400;\n}\nif (global.kmh > 400)\n{\n    global.kmh = 400;\n}", "if (_gearlimit > global.cambio_vmax)\n{\n    _gearlimit = global.cambio_vmax;\n}\nif (global.kmh > global.cambio_vmax)\n{\n    global.kmh = global.cambio_vmax;\n}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "global.kmh = clamp(global.kmh, 0, 400);", "global.kmh = clamp(global.kmh, 0, global.cambio_vmax);", true);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 300)\n    {\n        _fator_velocidade = 3.2;\n    }", "else if (global.kmh >= 400)\n    {\n        _fator_velocidade = 3.2;\n    }", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "else if (global.kmh >= 250 && global.kmh < 300)", "else if (global.kmh >= 250 && global.kmh < 400)", false);
+// ===================================================================
+
 g.QueueFindReplace("gml_GlobalScript_GetNameParts",
     @"        default:
             return [];
@@ -2029,7 +2098,7 @@ string s1 = "", s2 = "", s3 = "";
 try { s1 = GetDecompiledText(Data.Code.ByName("gml_RoomCC_Start_0_Create"), ctx, st); } catch { s1 = "ERR"; }
 try { s2 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_player_Step_0"), ctx, st); } catch { s2 = "ERR"; }
 try { s3 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_noguiin_Draw_64"), ctx, st); } catch { s3 = "ERR"; }
-string s4 = "", s5 = "", s6 = "", s7 = "", s8 = "", s9 = "", s10 = "";
+string s4 = "", s5 = "", s6 = "", s7 = "", s8 = "", s9 = "", s10 = "", s11 = "", s12 = "";
 try { s4 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_pc_window_Draw_0"), ctx, st); } catch { s4 = "ERR"; }
 try { s5 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_GetNameParts"), ctx, st); } catch { s5 = "ERR"; }
 try { s6 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Delivery"), ctx, st); } catch { s6 = "ERR"; }
@@ -2037,6 +2106,8 @@ try { s7 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_Inventory"), ctx
 try { s8 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_player_Create_0"), ctx, st); } catch { s8 = "ERR"; }
 try { s9 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_noguiin_Draw_0"), ctx, st); } catch { s9 = "ERR"; }
 try { s10 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_minigames_noguiintech"), ctx, st); } catch { s10 = "ERR"; }
+try { s11 = GetDecompiledText(Data.Code.ByName("gml_GlobalScript_EstruturaSalvamento"), ctx, st); } catch { s11 = "ERR"; }
+try { s12 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_player_Step_0"), ctx, st); } catch { s12 = "ERR"; }
 string n1 = "", n2 = "", n3 = "", n4 = "";
 try { n1 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_Step_0"), ctx, st); } catch { n1 = "ERR"; }
 try { n2 = GetDecompiledText(Data.Code.ByName("gml_Object_obj_ia_car_TOUGE_Step_0"), ctx, st); } catch { n2 = "ERR"; }
@@ -2081,6 +2152,12 @@ ScriptMessage($"MARK cambio_dlv={(s6.Contains("manual_8m") ? "ok" : "ausente")}"
 ScriptMessage($"MARK cambio_mini={(s10.Contains("manual_8m") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cambio_usefunc={(s7.Contains("\"manual_8m\"]") && s7.Contains("_cambio_keys") ? "ok" : "ausente")}");
 ScriptMessage($"MARK cambio_campoval={(s7.Contains("campo_val = 9") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_rel_schema={(s11.Contains("relacao_final = 3.73") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_rel_create={(s8.Contains("_rel_final") && s8.Contains("global.cambio_rel_min") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_rel_ui={(s9.Contains("gear_temp_rel") && s9.Contains("cambio_txt_rel") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_rel_save={(s9.Contains("relacao_final = global.gear_temp_rel") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_limite={(s9.Contains("global.cambio_limite_pct") ? "ok" : "ausente")}");
+ScriptMessage($"MARK cambio_vmax={(s12.Contains("global.cambio_vmax") ? "ok" : "ausente")}");
 ScriptMessage($"MARK dev_cash={(s1.Contains("global.dev_cash_aplicar") && s1.Contains("global.cash_guard") ? "ok" : "ausente")}");
 ScriptMessage($"MARK no_tracao_pen={(s2.Contains("if (_mod_points > 5)") ? "ausente" : "ok")}");
 ScriptMessage($"MARK no_launch_pen={(s2.Contains("_launch_grip") ? "ausente" : "ok")}");

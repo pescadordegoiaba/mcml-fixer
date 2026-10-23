@@ -47,7 +47,7 @@ Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
 
 ```bash
 mcml-fixer --mod-install                 # aplica (backup automatico)
-mcml-fixer --mod-check                   # 45 marcadores dentro do decompilado
+mcml-fixer --mod-check                   # 51 marcadores dentro do decompilado
 mcml-fixer --mod-status                  # estado + caminho do ini
 mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
 mcml-fixer --mod-uninstall               # restaura o backup
@@ -157,6 +157,11 @@ Dois câmbios novos pelo caminho nativo do jogo (`car.cambio` 8 e 9):
 Instalam no fluxo nativo: oficina do Tião (dinamômetro) → inventário → clicar no
 câmbio → `use` → confirmar. As 8 marchas ficam ajustáveis no caderno do "Forjar
 Câmbio", que passou a desenhar 8 linhas sem sobrepor o custo.
+
+No mesmo caderno, cada marcha varia **±70% do valor original** (antes era ±0,2 da 5ª
+em diante) e existe uma linha de **relação final** (2,60–5,10, default 3,73 = neutro)
+— menor = mais velocidade final, maior = mais arrancada. O teto de velocidade subiu de
+400 para 500 km/h (`[cambio] vmax`).
 
 ### Menu
 
