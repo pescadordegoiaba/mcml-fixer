@@ -64,6 +64,13 @@ ck("sem_speed_resistance", "lerp(1, 0.5, _smooth_ratio)" not in step)
 ck("corte_por_roda", "global.pt_rpm_roda()" in init)
 ck("salva_no_confirmar", "SaveAllCars();" in init and "SaveGame();" in init)
 ck("migracao_esquema", "cg_versao" in init and "MIGRADO" in init)
+_col = ""
+for _f in ("v3_col_touge.gml", "v3_col_npc.gml"):
+    _p = D / _f
+    if _p.exists():
+        _col += _p.read_text(encoding="utf-8", errors="ignore")
+ck("sem_teto_400_colisao", _col != "" and ", 400)" not in _col, "colisoes sem clamp 400")
+
 _ini = init[init.index("global.cg_init_car = function"):init.index("global.cg_aplicar = function")]
 ck("flag_edicao_preservada", "_car.cambio_mod = 0" not in _ini)
 

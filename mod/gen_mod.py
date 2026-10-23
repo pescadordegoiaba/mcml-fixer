@@ -1095,6 +1095,10 @@ global.cambio_txt_rel = function() {
 // ================= CAMBIO: camada unica (cg v3) =================
 global.cg_versao = 3;
 global.cg_migrado = 0;
+global.cg_probe_t = 0;
+global.cg_acc = 0;
+global.cg_drag = 0;
+global.cg_fv = 1;
 
 global.cg_num = function(_v, _def) {
     if (!is_real(_v)) return _def;
@@ -1479,6 +1483,23 @@ if (instance_exists(obj_player) && global.kmh > 5) {
     draw_set_alpha(0.8);
     draw_set_color(c_white);
     draw_text_transformed(12, 12, _txt, 0.6, 0.6, 0);
+    // sonda do topo: registra o que limita acima de 300 km/h
+    if (global.kmh > 300 && current_time - global.cg_probe_t > 400) {
+        global.cg_probe_t = current_time;
+        global.cg_diag("TOPO kmh=" + string(round(global.kmh))
+            + " rpm=" + string(round(global.rpm))
+            + " gear=" + string(global.gear) + "/" + string(obj_player.max_gears)
+            + " r=" + string(global.pt_ratio(global.gear))
+            + " rpm_roda=" + string(round(global.pt_rpm_roda()))
+            + " corte=" + string(global.pt_em_corte())
+            + " acc=" + string(round(global.cg_acc * 100) / 100)
+            + " drag=" + string(round(global.cg_drag * 1000) / 1000)
+            + " fv=" + string(global.cg_fv)
+            + " vmax=" + string(global.cambio_vmax)
+            + " torque=" + string(round(global.torque))
+            + " slip=" + string(round(global.phys_slip * 100))
+            + " at=" + string(global.car_data[global.vehicles_array].at));
+    }
     draw_set_alpha(1);
 }
 
@@ -1873,10 +1894,22 @@ PT_BAND_NEW = _cq("_power_band_mult = 1;")
 PT_SPEEDRES_OLD = _cq("var _speed_resistance = lerp(1, 0.5, _smooth_ratio);")
 PT_SPEEDRES_NEW = _cq("var _speed_resistance = 1;")
 
+CG_DRAG_OLD = _cq("global.kmh -= (_desacel_arrasto * global.dt);")
+CG_DRAG_NEW = _cq("global.kmh -= (_desacel_arrasto * global.dt);\nglobal.cg_drag = _desacel_arrasto;\nglobal.cg_fv = _fator_velocidade;")
+
+# ---- teto de 400 nas colisoes: usa o teto do cambio ----
+COL_OLD = _cq("clamp(global.kmh, 0, 400)")
+COL_NEW = _cq("clamp(global.kmh, 0, global.cambio_vmax)")
+NPC_OLD = _cq("global.kmh = clamp(global.kmh - (_fecha * random_range(0.5, 1)), 0, 400);")
+NPC_NEW = _cq("global.kmh = clamp(global.kmh - (_fecha * random_range(0.5, 1)), 0, global.cambio_vmax);")
+TOUGE_OLD = _cq("kmh = clamp(kmh + (_fecha * 0.3), 0, 400);")
+TOUGE_NEW = _cq("kmh = clamp(kmh + (_fecha * 0.3), 0, global.cambio_vmax);")
+
 PT_TARGET_OLD = _cq("""_target_speed = min(global.kmh + _acceleration, _gearlimit);
         if (global.kmh < _gearlimit)""")
 PT_TARGET_NEW = _cq("""_acceleration *= (1 - global.pt_em_corte());
         if (global.pt_shift_t > 0) _acceleration *= 0.15;
+        global.cg_acc = _acceleration;
         _target_speed = global.kmh + _acceleration;
         if (global.kmh < global.cambio_vmax)""")
 
@@ -2114,6 +2147,12 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM4_OLD}", "{VM4_NEW}", fal
 
 // ---- powertrain: corte de giro corta torque, corte de troca corta torque, sem parede ----
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_TARGET_OLD}", "{PT_TARGET_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{CG_DRAG_OLD}", "{CG_DRAG_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Collision_obj_ia_car_TOUGE", "{COL_OLD}", "{COL_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Collision_obj_player", "{COL_OLD}", "{COL_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Collision_obj_ia_car_NPC", "{COL_OLD}", "{COL_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Collision_obj_player", "{NPC_OLD}", "{NPC_NEW}", true);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Collision_obj_player", "{TOUGE_OLD}", "{TOUGE_NEW}", true);
 // upshift nao recalculava _gearlimit: o rpm nao caia na troca (bug do jogo)
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_UP_MAN_OLD}", "{PT_UP_MAN_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_UP_AUTO_OLD}", "{PT_UP_AUTO_NEW}", false);

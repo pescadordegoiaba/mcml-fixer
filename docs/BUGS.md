@@ -582,3 +582,22 @@ carro usa a tabela de fábrica e o menu continua aparecendo.
 
 **Lição:** antes de "limpar" um estado que parece inconsistente, procure **quem lê**
 esse estado (`tem_cambio`) — ele pode ser a chave de uma tela.
+
+## BUG 24 — teto de 400 km/h nas colisões
+
+Quatro scripts de colisão gravavam o teto **400** literal na velocidade do jogador:
+
+| Arquivo | Linha |
+|---|---|
+| `05044_gml_Object_obj_ia_car_NPC_Collision_obj_player.gml` | 38 e 39 |
+| `05332_gml_Object_obj_player_Collision_obj_ia_car_TOUGE.gml` | 31 e 37 |
+| `05053_gml_Object_obj_ia_car_TOUGE_Collision_obj_player.gml` | 9 |
+| `05043_gml_Object_obj_ia_car_NPC_Collision_obj_ia_car_NPC.gml` | 9 |
+
+No `obj_player_Step_0` o teto já tinha virado `global.cambio_vmax` (500), mas estas
+colisões continuavam clampando em 400 — e elas rodam justamente **na rodovia**, onde o
+carro passa dos 400. Resultado: qualquer toque em carro de tráfego puxava o velocímetro
+de volta para 400, dando a impressão de "limitador em 400" com o motor sobrando.
+
+**Correção (3.0.2):** os quatro usam `global.cambio_vmax`. Provas: dump dos dois objetos
+de colisão do jogador sem `, 400)` (`verify_cambio.py` → `sem_teto_400_colisao`, 20/20).
