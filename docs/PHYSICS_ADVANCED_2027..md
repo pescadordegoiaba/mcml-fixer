@@ -1,10 +1,10 @@
 # MCML Realistic Physics Spec (2D Drag Racing)
 
-**Versão:** v2.3 — 3ª rodada de auditoria (2026-11-07). Corrige o sinal do momento aero (invertido nos 4 casos) e a dupla integração de `omega_w` no stick da embreagem. Histórico completo de correções na §9.  
+**Versão:** v2.4 — 4ª rodada de auditoria (2026-11-07). Pneu PER-AXLE (`tire_front`/`tire_rear`), nota do `T_reaction_motor` FECHADA (física confirmada), precedência de `omega_w` em duplo stick declarada e Highway decidida como modo físico separado (§1.1). Histórico completo de correções na §9.  
 **Status:** Especificação pronta para implementação.  
 **Alvo:** My Car My Life (GameMaker 1.4) via injeção GML/CSX do `mcml-fixer`.  
 **Objetivo:** Substituir a física artificial de tração/velocidade/RPM por um sistema emergente (torque → roda → pneu → chassi), sem clamps de velocidade ou redline duro.  
-**Escopo principal:** Longitudinal + pitch (side-view de arrancada) + DOF vertical da massa não suspensa **dianteira** (wheelie com perda de contato real). Lateral mínimo (traction circle) para a Ignorantes Highway.
+**Escopo principal:** Longitudinal + pitch (side-view de arrancada) + DOF vertical da massa não suspensa **dianteira** (wheelie com perda de contato real). **Sem lateral na fase 1** (`F_y ≡ 0`) — a Ignorantes Highway é um modo físico separado (decisão v2.4, §1.1).
 
 ---
 
@@ -37,17 +37,25 @@ Regra prática de momento (CG como pivô): força vertical ↑ aplicada **à fre
 | Contato com o solo | **Por geometria** (`z_u ≤ radius`), nunca por força | Auditoria 1.1: checar "no ar" por `normal_load == 0` eliminava o wheelie real. |
 | Suspensão | Half-car cinemático no eixo traseiro; dianteiro com `m_u` dinâmico. **Bump/droop stops na equação de força** | Auditoria 1.4: sem stops, o launch comprime além do curso, `F_susp` explode e o chassi dá "snap". |
 | Rodas | 2 eixos. Cada eixo tem `omega_w`, suspensão relativa, contato unilateral e **`stick_state` com histerese** | Auditoria 1.3: sem máquina de estados, o burnout morre no 1º frame e o launch treme (chatter). |
-| Modelo de pneu | Curva de aderência simplificada + load sensitivity (com clamp) + **`temp_factor` explícito** + efeito de PSI | Auditorias 2.4 e 2.5. Pacejka completo é pesado; temperatura e PSI são mecânicas existentes no jogo. |
+| Modelo de pneu | **PER-AXLE — `tire_front`/`tire_rear` (v2.4)** + curva de aderência simplificada + load sensitivity (com clamp) + **`temp_factor` explícito** + efeito de PSI | Auditorias 2.4 e 2.5. v2.4: os eixos NUNCA compartilham pneu (street na frente, drag atrás) — PSI/burnout são o tuning central. Pacejka completo é pesado. |
 | Embreagem | Stick/slip com regimes explícitos, inércia efetiva e **`T_load_eng` definido** | Auditoria 3.3. |
 | Câmbio | **Sequência de troca com `shift_timer`**: abrir → trocar → fechar → rev-match (opcional) | Auditoria 2.3: troca instantânea distorce o ET em 0,2–0,5 s por troca. |
 | Motor | **Stall + restart por ignição** (starter); `omega_eng ≥ 0` garantido em todo substep | Auditoria 2.2: sem stall, `omega_eng` fica negativa e inverte todos os sinais acoplados. |
 | Wheelie bar | **Fórmula explícita de contato** (ponta da barra vs. solo, mola + damping unilaterais) | Auditoria 2.1: dispositivo de segurança central; sem fórmula o carro capota ou a barra atravessa o chão. |
 | Freio | **Restrição (complementaridade)**, por eixo: pedal + **line lock** + handbrake | Auditoria 4: freio força-bruta oscila entre travar/destravar. Line lock/handbrake = mecânica de burnout. |
 | Anti-squat | Parâmetro `h_antisquat` (ou %) por carro/suspensão traseira. | Tuning central de drag racing. |
-| Lateral | Traction circle explícito (escala `F_x` e `F_y`) quando ativo. | Necessário na Highway. Desligado na arrancada reta. |
+| Lateral | **Nenhum na fase 1** — `F_y ≡ 0` na Arrancada; o traction circle (§3.4) permanece como INTERFACE. Highway = modo físico separado (§1.1 — v2.4). | Este `phys_step` é de trajetória reta: não há `delta`, yaw nem `F_y(α)`; embuti-los agora reabriria a ordem de passos estabilizada na §4. |
 | Integração | Euler semi-implícito + substeps limitados (2–4). | Estabilidade com molas, embreagem e wheelie bar. |
 | Soft-body RoR | **Fora de escopo** | Desnecessário em 2D de arrancada. |
 | Unidades | Física em SI (m, kg, N, rad/s). Conversão para pixels só na renderização. | Evita bugs de sinal e escala. |
+
+### 1.1 Decisão de escopo (v2.4): Ignorantes Highway = modo físico SEPARADO
+
+O `phys_step` deste documento é **estritamente longitudinal** (side-view, heading fixo, trajetória reta). A auditoria v2.4 apontou que a Highway exige `steer_angle (delta)`, estado de yaw/beta e `F_y(α)` — nenhum deles existe neste modelo, e embuti-los reabriria a ordem de passos e os lags estabilizados na §4. Decisão:
+
+- **Arrancada (este spec):** `F_y ≡ 0` por definição. O traction circle da §3.4 permanece como **interface** — a fórmula de escala está correta e degrada para o limite longitudinal com `F_y = 0`.
+- **Highway:** modo separado com física lateral simplificada (modelo bicicleta: input `delta`, yaw rate, `F_y(α)` linear com saturação pelo MESMO traction circle) — especificação própria na fase 2, reaproveitando as structs de pneu per-axle (§2.4).
+- Consequência na §7: o teste de combined slip passa a ser estrutural (injeção de `F_y` sintético) — com `F_y = 0` sempre, o teste antigo passava trivialmente sem validar nada.
 
 ---
 
@@ -60,8 +68,11 @@ chassis:
   mass_sprung         // kg = mass - axle_front.mass_unsprung - axle_rear.mass_unsprung
                       //     (derivado no load do carro; heave/pitch são do corpo SPRUNG — §3.7;
                       //      mass_unsprung é LUMPED por eixo — §2.2)
-  inertia_pitch       // kg·m²  ≈ mass_sprung * (wheelbase²/12 + h_cg²)
-                      //     (aproximação de caixa uniforme; carro com massa traseira
+  H_body              // m (altura da caixa do corpo — só p/ a aproximação de inércia)
+  inertia_pitch       // kg·m²  ≈ mass_sprung * (wheelbase² + H_body²) / 12
+                      //     (v2.4: era (wheelbase²/12 + h_cg²) — h_cg é ALTURA DO CG, não
+                      //      dimensão do corpo; a caixa correta usa a altura H_body.
+                      //      Aproximação de caixa uniforme; carro com massa traseira
                       //      concentrada subestima — CAD/calibração SUBSTITUI este default)
   h_cg                // m (altura do CG, default 0.45–0.55)
   a_cg                // m (distância horizontal CG → eixo dianteiro; default L/2)
@@ -93,6 +104,10 @@ axle:                 // CONVENÇÃO LUMPED (v2.3): TODOS os campos representam 
                       //   nasce exatamente de ler estes campos como per-wheel.
   driven              // bool
   radius              // m (R_e)
+  tire                // referência à struct de pneu DESTE eixo (tire_front / tire_rear —
+                      //     v2.4, §2.4): mu_base, mu_static, load_sensitivity, psi_peak,
+                      //     k_heat/k_cool e os ESTADOS psi/temp são do pneu do eixo
+                      //     (LUMPED como o resto — side-view: 1 pneu por eixo)
   mass_unsprung       // kg (dianteiro: massa do DOF dinâmico; traseiro: só carga estática)
   inertia_wheel       // kg·m² (roda)
   T_brake_max         // N·m (torque de freio máx. deste EIXO a pedal cheio; LUMPED —
@@ -116,7 +131,7 @@ axle:                 // CONVENÇÃO LUMPED (v2.3): TODOS os campos representam 
   k_droop             // N/m² (batente de extensão quadrático; mesma faixa do k_bump)
   normal_load         // N (F_z dinâmico)
   fx                  // N (força longitudinal no solo)
-  fy                  // N (força lateral, só quando lateral ativo)
+  fy                  // N (força lateral — SEMPRE 0 na fase 1, §1.1; interface p/ a Highway)
   grounded            // bool (definido POR GEOMETRIA — §3.6)
   stick_state         // bool (máquina de estados do pneu, §3.4; init = true)
   z_u                 // m (altura do centro da roda; estado dinâmico no eixo dianteiro,
@@ -133,7 +148,8 @@ powertrain:
   clutch_engagement   // 0..1 (pressão)
   clutch_capacity_max // N·m
   gear                // int
-  gear_ratios[]       // final já incluída
+  gear_ratios[]       // final já incluída; todas POSITIVAS — ré fora do escopo na
+                      //     fase 1 (gear_ratio < 0 não modelado — v2.4, §8)
   efficiency          // 0.85–0.95
   shift_phase         // "none" | "opening" | "swapping" | "closing"  (§3.10)
   shift_timer         // s (tempo dentro da fase atual)
@@ -146,19 +162,24 @@ powertrain:
   T_starter           // N·m (~80)
 ```
 
-### 2.4 Parâmetros de pneu / pista
+### 2.4 Parâmetros de pneu (POR EIXO — v2.4)
 ```
-tire:
-  mu_base             // pico (street ~0.9, slick ~1.3, drag ~1.6–2.0)
+tire_front, tire_rear:   // DUAS structs separadas — v2.4: drag racing NUNCA tem os
+                         //  4 pneus iguais (street radial na frente, drag radial/slick
+                         //  atrás); PSI/temp são o tuning central do jogo. Cada `axle`
+                         //  referencia a sua (§2.2) e a §3.4 roda POR EIXO.
+  mu_base             // pico (tire_front: street radial ~0.95 | tire_rear: drag radial
+                      //      ~1.7, slick até ~2.0)
   mu_static           // ≥ mu_base
   load_sensitivity    // 0.1–0.2 (μ cai com F_z)
-  temp                // °C (estado dinâmico)
-  T_amb               // °C (ambiente da pista)
-  psi                 // pressão (estado; afeta μ e Crr)
+  temp                // °C (estado dinâmico POR EIXO — o burnout aquece SÓ a traseira)
+  psi                 // pressão (estado POR EIXO; afeta μ e Crr — input §2.6)
   psi_peak            // pressão de pico de mu_psi POR TIPO de pneu (v2.3):
                       //     street ~32 | drag ~10 — pneu drag PENALIZA pressão alta
   k_heat              // coeficiente de aquecimento por potência de slip
   k_cool              // coeficiente de resfriamento
+// v2.4: `T_amb` SAIU do struct — é da PISTA, não do pneu (default 25 °C na §2.7;
+// não duplicar estado)
 ```
 
 ### 2.5 Wheelie bar
@@ -178,12 +199,14 @@ inputs:
   throttle            // 0..1
   clutch_pedal        // 0..1 (1 = totalmente aberta)
   brake_pedal         // 0..1 (age nos 2 eixos)
-  line_lock           // bool — trava SÓ o eixo dianteiro (burnout, auditoria 4)
+  line_lock           // bool — trava SÓ o eixo dianteiro = eixo NÃO motriz (burnout,
+                      //     auditoria 4; pressupõe RWD — em FWD seria traseiro, fase 2 v2.4)
   handbrake           // bool — trava SÓ o eixo traseiro
   gear_target         // int
   shift_request       // bool (borda de subida dispara a sequência §3.10)
   ignition            // bool (aciona starter quando engine_stalled — §3.9)
-  psi                 // pressão ajustada pelo jogador
+  psi_front, psi_rear // pressão ajustada pelo jogador POR EIXO (v2.4 — tire per-axle
+                      //     §2.4: PSI traseiro baixo + burnout é o tuning central)
 ```
 
 ### 2.7 Constantes centralizadas (defaults — v2.2)
@@ -198,7 +221,9 @@ constantes:
   k_rev               // s/rad — ganho do rev-match (§3.10); default 0.01
                       //        (throttle cheio com mismatch ≥ ~100 rad/s)
   // Idle (§3.1)
-  k_idle              // 1/(rad/s) — ganho P do idle (default 0.002)
+  k_idle              // 1/(rad/s) — ganho P do idle (default 0.015 — v2.4: 0.002 não
+                      //        vencia o atrito ~29 N·m com erro típico de 10 rad/s;
+                      //        0.015 satura o cap 0.15 nesse erro; calibrar no §7)
   omega_idle          // rad/s — referência do idle (default ~84 ≈ 800 rpm)
   T_amb               // °C — ambiente da pista (default 25; ler da pista se o jogo expuser)
   // Tolerâncias numéricas
@@ -221,7 +246,7 @@ T_eng = T_comb - T_friction
 - `throttle_eff` = throttle pós-corte/rev-match da troca de marcha (§3.10).
 - Abaixo do idle: torque negativo (motor tenta morrer → §3.9).
 - Acima do corte: redução progressiva (fuel cut / retard), **não clamp duro**.
-- Idle controller (v2.3, P simples): `throttle_idle = clamp(k_idle*(omega_idle - omega_eng), 0, 0.15)`; usar `throttle_eff = max(throttle_eff, throttle_idle)` com embreagem aberta ou ponto morto. Defaults na §2.7.
+- Idle controller (v2.3, P simples): `throttle_idle = clamp(k_idle*(omega_idle - omega_eng), 0, 0.15)`; usar `throttle_eff = max(throttle_eff, throttle_idle)` com embreagem aberta ou ponto morto. Defaults na §2.7. **v2.4:** `k_idle` 0.002 → **0.015** — com erro de 10 rad/s o ganho antigo dava ~2% de throttle, insuficiente contra o atrito de ~29 N·m (`k_fmep·omega_idle + k_pump`); o idle podia cair sozinho.
 - **Clamp global (auditoria 2.2): `omega_eng = max(0, omega_eng)` ao final de cada substep, em qualquer regime.**
 
 ### 3.2 Embreagem — regimes e equações de `omega_eng`
@@ -269,7 +294,12 @@ T_load_eng = Σ_driven(F_x_axle * radius + T_brake_eff_axle) / (gear_ratio * eff
                                                     //   migrar p/ slip no substep seguinte
    omega_w = omega_eng / gear_ratio         // PROJEÇÃO — única atualização de omega_w do
                                             //   eixo driven neste substep; NÃO re-integrar
-                                            //   no passo 9 (v2.3 — §3.5/§4)
+                                            //   no passo 9 (v2.3 — §3.5/§4).
+                                            //   v2.4: em DUPLO STICK (pneu também em stick)
+                                            //   esta projeção NÃO define omega_w — prevalece
+                                            //   a constraint do solo vx/radius (§3.4); a
+                                            //   projeção serve SÓ para fechar a equação do
+                                            //   motor, nunca p/ slip/F_x do passo 7
    ```
    - `F_x` e `T_brake_eff` de `T_load_eng` são os do **substep anterior** (lag de 1 substep — declarado e aceitável).
    - Não atribuir `omega_eng` diretamente sem ajustar o torque líquido (evita salto de energia).
@@ -279,7 +309,7 @@ T_load_eng = Σ_driven(F_x_axle * radius + T_brake_eff_axle) / (gear_ratio * eff
 **Cadeia do DUPLO STICK (v2.3 — embreagem travada + pneu travado: o regime que define o 60-foot. Os dois sticks são acoplados via `F_x`/`T_wheel`; resolver NESTA ordem, sem tentar fechar a circularidade dentro do mesmo substep):**
 1. `a_x` do substep anterior (lag declarado, §4).
 2. Pneu em stick: `F_x = (T_wheel - T_brake_eff - I_eq_wheel*a_x/radius)/radius` (§3.4).
-3. Embreagem em stick: `omega_eng` integra com `I_eq`; `omega_w = omega_eng/gear_ratio` é PROJEÇÃO — o passo 9 NÃO re-integra (§3.5).
+3. Embreagem em stick: `omega_eng` integra com `I_eq`; `omega_w = omega_eng/gear_ratio` é PROJEÇÃO — o passo 9 NÃO re-integra (§3.5). Em duplo stick, o valor VIGENTE de `omega_w` é `vx/radius` (o solo ganha — v2.4); a projeção existe apenas para o fechamento do motor.
 4. `T_load_eng` do próximo substep fecha a conta com o `F_x` recém-gerado.
 - Fechamento exato (RWD, eff = 1): `T_wheel − F_x·r − T_brake_eff = I_eq_wheel·domega_w/dt`; com `eff < 1` fecha a menos do termo dissipado. A cadeia com lags de 1 substep converge a 240 Hz; iteração extra opcional máx. 1× (§6).
 
@@ -295,6 +325,8 @@ T_wheel = (T_clutch * gear_ratio * efficiency) / n_driven_axles   // LUMPED: tot
 - A reação no chassi gera momento de pitch via `T_reaction_motor` (§3.7), modulado por anti-squat na força de contato.
 
 ### 3.4 Slip ratio, temperatura, PSI, stiction e força do pneu
+
+**POR EIXO (v2.4):** todas as fórmulas desta seção rodam com a `tire` do PRÓPRIO eixo (`axle.tire`, §2.2/§2.4) — `psi`, `psi_peak`, `mu_base`, `mu_static`, `load_sensitivity`, `temp`, `k_heat`/`k_cool` são do pneu do eixo. O burnout aquece só o pneu traseiro; PSI dianteiro e traseiro são tunados separadamente.
 ```
 v_wheel = omega_w * radius
 kappa = (v_wheel - vx) / max(abs(vx), 0.5)
@@ -304,10 +336,14 @@ kappa = (v_wheel - vx) / max(abs(vx), 0.5)
 psi_norm = clamp((psi - psi_peak + 15) / 15, 0, 1)   // rampa 0→1 saturando no pico
 mu_psi  = lerp(0.85, 1.05, psi_norm)                 // street: pico ~32 | drag: pico ~10
 crr_psi = lerp(0.015, 0.008, psi_norm)
+// v2.4 (fase 2): dP/dt = k_psi_heat*(temp - T_amb) — o PSI sobe ~1–2 psi com o
+// calor em corridas longas (Highway); na arrancada (~10 s) psi é estático (input)
 
-// mu_eff com referência de carga DO PRÓPRIO EIXO (auditoria 2.4)
-F_z0_front = mass * g * b_cg / L          // carga estática dianteira
-F_z0_rear  = mass * g * a_cg / L          // carga estática traseira
+// mu_eff com referência de carga DO PRÓPRIO EIXO (auditoria 2.4; v2.4: mass →
+// mass_sprung + m_u do eixo — a carga estática correta NÃO inclui o peso do
+// OUTRO eixo; ~2% de efeito no load sensitivity)
+F_z0_front = mass_sprung * g * b_cg / L + mass_unsprung_front * g   // estática dianteira
+F_z0_rear  = mass_sprung * g * a_cg / L + mass_unsprung_rear  * g   // estática traseira
 mu_load = 1 - load_sensitivity * (normal_load / F_z0_axle - 1)
 mu_eff = mu_base * mu_psi * max(mu_load, 0.05)      // clamp: mu_eff NUNCA ≤ 0
 mu_eff *= temp_factor(temp)
@@ -341,7 +377,10 @@ else:
         stick_state = true                         // recuperou (histerese 0.9×)
 
 if stick_state and grounded:
-    omega_w = vx / radius                          // constraint cinemática
+    omega_w = vx / radius                          // constraint cinemática — v2.4: em
+                                                   // DUPLO STICK prevalece sobre a projeção
+                                                   // omega_eng/gear_ratio (§3.2); o F_x desta
+                                                   // linha NUNCA usa omega_eng/g
     // v2.2: a constraint completa é domega_w/dt = a_x/r. Isolando F_x na equação
     // da roda (§3.5), esta é a força que mantém a roda sincronizada com o solo
     // ENQUANTO o carro acelera (T_brake_eff e a_x: do substep anterior — lags §4).
@@ -445,7 +484,7 @@ travel_vel_rear = -(vz - b_cg * cos(theta) * omega_pitch)
 normal_load = max(0, F_susp + mass_unsprung * g + F_df_rear)
 ```
 - Com wheelie bar (§3.11), a traseira não levanta — a restrição cinemática é honesta.
-- Sem barra (ou barra vencida): se `theta > 60°` → **game event "capotou"**; congela o pitch e encerra a passagem (a fase 1 não simula capotamento completo — ver §8).
+- Sem barra equipada (v2.4: a barra NUNCA "vence" — o modelo não tem stress/fadiga; "barra vencida" = sem barra): se `theta > 60°` → **game event "capotou"**; congela o pitch e encerra a passagem (a fase 1 não simula capotamento completo — ver §8).
 
 ### 3.7 Equações do chassi (heave + pitch + longitudinal — sinais normalizados)
 ```
@@ -497,6 +536,11 @@ T_reaction_motor = s_eng * T_clutch                 // T_clutch: torque transmit
 //   -1  → motor TRANSVERSAL, crank no sentido INVERSO (final drive que inverte — típico
 //         em FWD): reação empurra o nariz PARA BAIXO.
 // Verificação rápida (hub motor): acelerar → nariz↑; regeneração/freio motor → nariz↓.
+// CONFIRMADO v2.4 (derivação da mão direita, revisor): longitudinal → roll ✓ (s_eng = 0
+//   evita dupla contagem com o axle wrap já capturado por h_traction); transversal →
+//   pitch com sinal conforme o sentido do crank ✓. Aproximação de 1ª ORDEM: captura a
+//   reação dos MOUNTS do motor; a reação da carcaça do diferencial (transaxle) não é
+//   modelada — aceitável na fase 1.
 ```
 - Cheque de sanidade estático (reescrito v2.2): em repouso, `sum_F_z = 0` exige `F_susp_front + F_susp_rear = mass_sprung * g` e o pitch exige `F_susp_front * a_cg = F_susp_rear * b_cg`. Somando as FBDs das rodas (`normal_load = F_susp + m_u·g + F_df`), as cargas no solo fecham `N_front + N_rear = mass * g` e o split segue a geometria (`N_front ≈ m*g*b_cg/L` — exato se a massa não suspensa respeita o mesmo weight bias).
 - A convenção de `F_aero_z` (lift-positivo, `ClA < 0` = downforce) resolve a ambiguidade da v2.0 — sem ela o carro "levitava" em alta velocidade (auditoria 3.2). O momento aerodinâmico vertical usa o braço LONGITUDINAL `x_cp` (força vertical aplicada a uma altura não gera pitch); o arrasto (horizontal) usa a altura `h_aero`.
@@ -578,20 +622,20 @@ else:
 
 ## 4. Ordem do `phys_step(dt)` (reordenada)
 
-1. **Entradas**: throttle, clutch_pedal, brake_pedal, line_lock, handbrake, gear_target, shift_request, ignition, psi.
+1. **Entradas**: throttle, clutch_pedal, brake_pedal, line_lock, handbrake, gear_target, shift_request, ignition, psi_front, psi_rear (v2.4).
 2. **Máquina de troca de marcha** (§3.10) → `clutch_engagement` alvo, `throttle_eff`, `gear`.
 3. **Torque do motor**: `motor_torque` existente + friction; checa stall (§3.9); obtém `T_eng`.
 4. **Determina regime da embreagem** e calcula `T_clutch` (§3.2) — usa `F_x` e `T_brake_eff` do substep anterior (lag declarado).
 5. **Atualiza `omega_eng`** conforme o regime; clamp `omega_eng ≥ 0` (§3.1).
 6. **Geometria e contato por eixo** (§3.6): `z_mount`, `grounded` (por geometria), `travel`, `travel_vel`, `F_susp` (com bump/droop stops), `normal_load` (com `F_df_axle`).
-7. **Para cada eixo grounded**: slip ratio → `mu_eff` (PSI, `temp_factor`, load sensitivity com clamp) → `F_x` via máquina de stiction (§3.4, com termo `- I_eq_wheel·a_x/r` usando o `a_x` do substep anterior); combined slip se lateral ativo.
-8. **Atualiza temperatura do pneu** (`dtemp/dt` via `slip_power`) usando o `F_x` **do passo 7** — sem circularidade (auditoria 3.1).
-9. **Integra `omega_w`** (§3.5): freio como restrição; eixo em stick do pneu segue constraint; **eixo driven com embreagem em `stick` NÃO integra (projeção do §3.2 — v2.3)**; eixo no ar gira livre com `T_wheel`.
+7. **Para cada eixo grounded**: slip ratio → `mu_eff` (PSI, `temp_factor`, load sensitivity com clamp — TUDO com a tire do eixo, v2.4) → `F_x` via máquina de stiction (§3.4, com termo `- I_eq_wheel·a_x/r` usando o `a_x` do substep anterior); combined slip se lateral ativo (na Arrancada `F_y ≡ 0` — §1.1).
+8. **Atualiza a temperatura do pneu DE CADA EIXO** (`dtemp/dt` via `slip_power`, estado per-axle — v2.4) usando o `F_x` **do passo 7** — sem circularidade (auditoria 3.1).
+9. **Integra `omega_w`** (§3.5): freio como restrição; eixo em stick do pneu segue constraint (`omega_w = vx/radius` — em duplo stick este valor PREVALECE sobre a projeção `omega_eng/g`, v2.4); **eixo driven com embreagem em `stick` NÃO integra (projeção do §3.2 — v2.3)**; eixo no ar gira livre com `T_wheel`.
 10. **Calcula forças e momentos no chassi** (§3.7): anti-squat, aerodinâmica (`F_aero_z`, `F_drag`), `F_rolling` por eixo e wheelie bar (§3.11 → `F_bar`).
 11. **Integra o chassi** (semi-implícito): `vx, vz, omega_pitch, x, z_cg, theta`.
 12. **Integra o DOF dianteiro** se no ar: `v_zu, z_u` (§3.6); checa pouso inelástico.
 13. **Substeps**: repete 2–4 vezes com `dt/substeps` se necessário.
-14. **Expõe telemetria**: slip, normal_load, T_wheel, rpm, temp, psi, `stick_state`, `clutch_mode`, `shift_phase`, `engine_stalled`, `z_u`, `bar_grounded`.
+14. **Expõe telemetria**: slip, normal_load, T_wheel, rpm, temp, psi (por eixo — v2.4), `stick_state`, `clutch_mode`, `shift_phase`, `engine_stalled`, `z_u`, `bar_grounded`.
 
 **Lags declarados dentro do substep (v2.2 — todos aceitáveis a dt ≈ 1/240 s; FAZEM PARTE do design: não reordenar os passos para "resolvê-los", isso reintroduz a circularidade que a §9 corrigiu):**
 
@@ -609,10 +653,10 @@ else:
 
 - **Entrada obrigatória**: `T_comb = global.motor_torque(rpm, throttle, afr, ...)`  
   (já calcula distribuidor, carburador, turbo, peças, desgaste).
-- **Saída**: o novo sistema escreve `vx`, `rpm`, `omega_w`, `normal_load`, `slip`, `tire_temp` em variáveis globais que a UI/dyno/AI já leem. **Novas saídas v2.1**: `engine_stalled`, `shift_phase`, `stick_state` (por eixo), `bar_grounded`, `z_u_front` (para a render do wheelie).
+- **Saída**: o novo sistema escreve `vx`, `rpm`, `omega_w`, `normal_load`, `slip`, `tire_temp` (por eixo — v2.4) em variáveis globais que a UI/dyno/AI já leem. **Novas saídas v2.1**: `engine_stalled`, `shift_phase`, `stick_state` (por eixo), `bar_grounded`, `z_u_front` (para a render do wheelie).
 - **Ponto de injeção**: substituir o bloco que calcula `_base_acceleration` e aplica movimento. Manter os patches de torque.
 - **Dyno**: deve chamar a mesma função de torque (estático) para consistência.
-- **PSI**: ler o valor de pressão que o jogo já expõe e alimentar `tire.psi`.
+- **PSI**: ler a pressão que o jogo já expõe e alimentar `tire_front.psi` / `tire_rear.psi` (per-axle — v2.4).
 - **Inputs novos a mapear**: line_lock, handbrake, ignition (ignição/starter) e brake por eixo — já existem como mecânicas de gameplay no jogo.
 
 ---
@@ -621,7 +665,7 @@ else:
 
 - Fixed timestep interno com acumulador. Clamp de substeps máximos (ex.: 4).
 - Evitar `division by zero` (slip já regularizado; `F_z0_axle` é constante positiva por construção).
-- **Dois "sticks" distintos**: embreagem (`clutch_mode`) e pneu (`stick_state`) — flags separadas, ciclos separados. Mesclar é o caminho mais curto para bug. **Porém acoplados** via `F_x`/`T_wheel`: no duplo stick (launch), seguir a cadeia declarada no §3.2 — não "resolver" a circularidade por conta própria.
+- **Dois "sticks" distintos**: embreagem (`clutch_mode`) e pneu (`stick_state`) — flags separadas, ciclos separados. Mesclar é o caminho mais curto para bug. **Porém acoplados** via `F_x`/`T_wheel`: no duplo stick (launch), seguir a cadeia declarada no §3.2 — não "resolver" a circularidade por conta própria. Em duplo stick, `omega_w = vx/radius` prevalece (constraint do solo); a projeção `omega_eng/g` só fecha a equação do motor (v2.4).
 - A histerese do stick custa 2 comparações por eixo; em debug, logar transições/s (chatter aceitável < ~5/s).
 - `omega_eng = max(0, omega_eng)` em todo substep, em qualquer regime.
 - **Não reordenar o `phys_step`** sem revisar a dependência `slip_power → F_x` (auditoria 3.1) nem os lags da §4 (v2.2).
@@ -638,12 +682,12 @@ else:
                             //   (ou assentar 0.5–1.0 s de simulação antes da largada)
   omega_eng = idle (~800 rpm ≈ 84 rad/s);  omega_w = 0 (2 eixos)
   clutch_pedal = 1 (aberta) ou input do jogador;  gear = 1 (ou N)
-  temp = T_amb;  psi = default do carro
+  temp = T_amb (2 eixos);  psi = default POR EIXO do carro (street/drag — v2.4)
   stick_state = true (2 eixos);  engine_stalled = false
   shift_phase = "none";  bar_grounded = false
   z_u = radius (2 eixos);  v_zu = 0
   ```
-- Reset de estado ao trocar de carro ou reiniciar corrida — incluir `stick_state`, `engine_stalled`, `shift_phase`, `temp` e `bar_grounded`.
+- Reset de estado ao trocar de carro ou reiniciar corrida — incluir `stick_state`, `engine_stalled`, `shift_phase`, `temp` (2 eixos — v2.4) e `bar_grounded`.
 - AI: mesma física + controlador simples de launch e shift (pode ser adicionado depois).
 - **Stick da embreagem**: usar inércia efetiva (§3.2) em vez de atribuição direta de `omega_eng`.
 
@@ -659,10 +703,10 @@ else:
 - **Duplo stick (v2.3)**: launch com embreagem travada + pneu aderente → `omega_w` atualizado UMA vez (projeção); logar `T_wheel − F_x·r − T_brake_eff − I_eq_wheel·domega_w/dt ≈ 0` (fechamento do §3.2).
 - **`T_clutch` no stick (v2.3)**: telemetria mostra `T_clutch = T_eng − inertia_eng·domega_eng/dt`, coerente com `T_wheel` e ≤ capacity.
 - **Reaction (v2.3)**: RWD longitudinal → `T_reaction_motor = 0` (wrap coberto pelo anti-squat); transversal → o nariz responde na direção declarada por `s_eng`.
-- **PSI por tipo (v2.3)**: pneu drag em ~10 psi → `mu_psi ≈ 1.05`; em 35 psi, penalizado. Street: o contrário.
-- **Burnout (auditoria 1.3)**: parado + line lock + throttle cheio → roda traseira gira (`stick_state` NÃO mata o spin), temperatura sobe e `temp_factor` melhora μ até o pico; superaquecido (> 140 °C), μ cai de volta.
+- **PSI por tipo (v2.3)**: pneu drag (traseiro) em ~10 psi → `mu_psi ≈ 1.05`; em 35 psi, penalizado. Street: o contrário.
+- **Burnout (auditoria 1.3)**: parado + line lock + throttle cheio → roda traseira gira (`stick_state` NÃO mata o spin), a temperatura do pneu TRASEIRO sobe (a dianteira fica ~T_amb — estado per-axle, v2.4) e `temp_factor` melhora μ até o pico; superaquecido (> 140 °C), μ cai de volta.
 - **Launch sem chatter**: `stick_state` não alterna mais que ~5×/s (log de debug na largada).
-- Launch com μ alto → 60-foot razoável; com o termo de inércia do stick (v2.2), o 60-foot melhora vs. `T_wheel/r` puro (sem viés de `a_x = 0`).
+- Launch com μ alto → 60-foot dentro dos alvos da tabela v2.4 (1,9–2,1 s p/ a classe de referência); com o termo de inércia do stick (v2.2), o 60-foot melhora vs. `T_wheel/r` puro (sem viés de `a_x = 0`).
 - **Wheelie real (auditorias 1.1/1.2)**: com CG alto + torque alto, `z_u_front > radius` (perda de contato GEOMÉTRICA), a roda cai, quica no damper e pousa inelasticamente sem explosão numérica.
 - **Wheelie bar (auditoria 2.1)**: `theta` satura no contato da barra, sem capotar; `penetration` de regime < ~2 cm; sem barra, `theta > 60°` dispara "capotou".
 - Anti-squat reduz o squat/wheelie de forma perceptível.
@@ -671,28 +715,56 @@ else:
 - **Clamps (auditoria 2.4)**: `assert mu_eff >= 0.05 * mu_base` e `assert omega_eng >= 0` em todo frame.
 - **Sinal de `F_aero_z` (auditoria 3.2)**: carro com `ClA < 0` NÃO levanta em alta velocidade; com `x_cp` à frente do CG, downforce mergulha o nariz.
 - **Weight bias**: com `a_cg ≠ b_cg`, o split estático segue `§3.7` (checar `F_susp_front*a_cg == F_susp_rear*b_cg` no equilíbrio).
-- Mudança de PSI altera μ e rolling resistance.
+- Mudança de PSI (por eixo) altera μ e rolling resistance SÓ do eixo ajustado (v2.4).
 - Soltar acelerador → engine braking reduz velocidade.
 - Trap speed emerge do equilíbrio potência vs. arrasto (sem vmax artificial).
 - Dyno mostra a mesma curva de torque que a pista usa.
-- Na Highway, combined slip limita a soma de forças longitudinais e laterais.
+- **Combined slip como interface (v2.4)**: na Arrancada `F_y ≡ 0` — o teste antigo ("na Highway, combined slip limita a soma") passava trivialmente e não validava nada; validar a fórmula de escala INJETANDO `F_y` sintético (p.ex. `F_y = 0.5·mu_eff·N`) e conferindo o clip de `F_x`. A validação lateral real (`delta`, yaw) pertence ao modo Highway (§1.1).
+
+**Alvos numéricos de validação (v2.4)** — "razoável" não é mensurável; ET simulado fora da faixa de forma sistemática (> ~5%) indica bug de física, não tuning:
+
+| Classe de referência | 60-foot | 1/4 mile | Trap speed |
+|---|---|---|---|
+| Street ~500 HP (drag radial atrás, launch bem executado) | 1,9–2,1 s | 11,5–12,0 s | ~190 km/h |
+
+- Demais classes: definir alvos calibrados contra tempos reais de referência ANTES de congelar a física.
 
 ---
 
 ## 8. Fora de escopo (fase 1)
 
 - Soft-body completo (RoR).
-- Modelo de bicicleta lateral completo (só traction circle).
+- Física lateral da Highway (modelo bicicleta: `delta`, yaw rate, `F_y(α)`) — modo separado, decisão v2.4 (§1.1); o traction circle permanece como interface (§3.4).
 - DOF dinâmico da massa não suspensa **TRASEIRA** (wheel hop traseiro) — o dianteiro entrou na fase 1 (decisão 1.2-b); o traseiro segue cinemático.
 - Airborne total (2 eixos no ar / saltos) e capotamento completo — a fase 1 trata `theta > 60°` sem barra como game event (§3.6).
 - Tire relaxation length (adicionar só se houver instabilidade).
 - Braço exato da wheelie bar no pitch (`h_bar·sin(theta)` — §3.7/§3.11): anotado na v2.2; entra na fase 2 junto com wheelies extremos.
+- Dinâmica térmica do PSI: `dP/dt = k_psi_heat*(temp - T_amb)` (~1–2 psi na Highway) — v2.4; na arrancada psi é estático.
+- Marcha à ré (`gear_ratio < 0`) — v2.4; a arrancada não precisa (posicionar no staging é gameplay).
+- Line lock no eixo correto para FWD (traseiro) — v2.4; a fase 1 pressupõe RWD.
 - Clutch térmico avançado e turbo lag dinâmico (já parcialmente no mod).
 - Colisão carro-carro.
 
 ---
 
 ## 9. Histórico de revisão (auditoria → correção)
+
+### v2.4 — 4ª rodada de auditoria (2026-11-07)
+
+| Item da auditoria | Severidade | Correção aplicada | Onde |
+|---|---|---|---|
+| 1 `tire` única p/ os 4 pneus — PSI/temp/μ iguais nos 4 (PSI/burnout são o tuning central) | **Bloqueante** | `tire_front`/`tire_rear` separadas; cada `axle` referencia a sua (§2.2); §3.4 roda POR EIXO com a tire do eixo (`mu_base`, `mu_static`, `load_sensitivity`, `psi_peak`, `k_heat`/`k_cool`); `temp` é estado dinâmico POR EIXO (burnout aquece só a traseira); input `psi` → `psi_front`/`psi_rear`; `T_amb` sai do struct (fica na §2.7) | §1, §2.2, §2.4, §2.6, §3.4, §4, §5, §6, §7 |
+| 2 Nota "needs confirmation" do `T_reaction_motor` aberta na §9 (v2.3) | **Bloqueante (formal)** | Nota FECHADA: derivação da mão direita confirmou — longitudinal → roll (`s_eng = 0` evita dupla contagem com o axle wrap via `h_traction`); transversal → pitch com `s_eng = ±1` pelo sentido do crank. Anotada como aproximação de 1ª ordem (reação dos MOUNTS; carcaça do diferencial/transaxle não modelada) | §3.7, §9 |
+| 3 Precedência de `omega_w` em duplo stick não declarada | Importante | Declarado: em duplo stick, `omega_w = vx/radius` prevalece (constraint do solo); a projeção `omega_eng/g` serve SÓ para fechar a equação do motor — nunca para `slip`/`F_x` do passo 7 | §3.2, §3.4, §4, §6 |
+| 4 Modelo lateral da Highway indefinido (`F_y`, `delta`, yaw) | **Bloqueante (se a Highway usasse este modelo)** | **Decisão de escopo:** Highway = modo físico SEPARADO (modelo bicicleta: `delta`, yaw rate, `F_y(α)` — spec próprio na fase 2, §1.1); este `phys_step` é estritamente longitudinal, `F_y ≡ 0` na Arrancada; traction circle permanece como interface; teste da §7 deixa de ser trivial (injeção de `F_y` sintético) | §1.1 (novo), §1, §3.4, §7, §8 |
+| 5 `F_z0_axle` usava `mass` total (~2% no load sensitivity) | Menor | `F_z0_front = mass_sprung·g·b_cg/L + mass_unsprung_front·g` (traseiro análogo) — a carga estática correta não inclui o peso do outro eixo | §3.4 |
+| 6 `k_idle = 0.002` baixo — idle podia cair (atrito ~29 N·m vs. ~2% de throttle no erro de 10 rad/s) | Menor | Default **0.015** (satura o cap 0.15 com erro ~10 rad/s); calibrar no checklist §7 | §2.7, §3.1 |
+| 7 PSI sem dinâmica térmica | Menor | Anotado fase 2: `dP/dt = k_psi_heat·(temp − T_amb)` (~1–2 psi na Highway); na arrancada (~10 s) psi é estático | §3.4, §8 |
+| 8 Alvos de validação não mensuráveis ("60-foot razoável") | Menor | Tabela de alvos: street ~500 HP → 60-ft 1,9–2,1 s; 1/4 mile 11,5–12,0 s; trap ~190 km/h; demais classes calibrar contra referências reais antes de congelar a física | §7 |
+| 9 `inertia_pitch` usava `h_cg²` (altura do CG ≠ dimensão do corpo) | Menor | `≈ mass_sprung·(L² + H_body²)/12` com novo campo `H_body`; CAD/calibração substitui | §2.1 |
+| 10 "Barra vencida", ré, line-lock FWD | Menor | "Capotou" só sem barra equipada (o modelo não tem stress/fadiga — barra nunca "vence"); ré fora do escopo (`gear_ratios` > 0); line lock = eixo NÃO motriz (em FWD seria traseiro, fase 2) | §3.6, §2.3, §2.6, §8 |
+
+**Decisões registradas nesta revisão (v2.4):** (14) pneu é PER-AXLE (`tire_front`/`tire_rear`) com `psi`/`temp` separados por eixo — PSI/burnout exigem estado térmico independente; (15) Highway = modo físico separado — `F_y ≡ 0` na Arrancada e o traction circle permanece como interface (§1.1); (16) em duplo stick prevalece `vx/radius` (solo) sobre a projeção `omega_eng/g`, que existe só para fechar a equação do motor; (17) `T_reaction_motor = s_eng·T_clutch` CONFIRMADO (mão direita) e anotado como aproximação de 1ª ordem (mounts; transaxle fora).
 
 ### v2.3 — 3ª rodada de auditoria (2026-11-07)
 
@@ -704,13 +776,13 @@ else:
 | 4 `T_reaction_motor` sem fórmula | Importante | `T_reaction_motor = s_eng·T_clutch` com `s_eng` por layout: longitudinal → 0 (crank é roll; wrap já no anti-squat), transversal → ±1 conforme sentido do crank (derivação da mão direita em §3.7) | §2.1, §3.7 |
 | 5 Lumped vs per-wheel não declarado | Importante | Convenção LUMPED no topo do struct do eixo: todos os campos = as 2 rodas somadas; `mass_sprung`, `T_load_eng`, `T_wheel`, `I_eq_wheel` anotados | §2.1, §2.2, §3.2, §3.3, §3.5 |
 | 6 Cadeia do duplo stick não declarada | Importante | Sequência explícita de 4 passos (lag `a_x` → `F_x` → projeção → `T_load`) + fechamento `T_wheel − F_x·r − T_brake = I_eq_wheel·dω_w/dt` | §3.2, §4, §6 |
-| 7a Idle controller sem fórmula | Menor | `throttle_idle = clamp(k_idle·(omega_idle − omega_eng), 0, 0.15)`; defaults `k_idle = 0.002`, `omega_idle ≈ 84` | §3.1, §2.7 |
+| 7a Idle controller sem fórmula | Menor | `throttle_idle = clamp(k_idle·(omega_idle − omega_eng), 0, 0.15)`; defaults `k_idle = 0.002`, `omega_idle ≈ 84` **(default corrigido p/ 0.015 na v2.4 — ganho insuficiente)** | §3.1, §2.7 |
 | 7b `mu_psi` fixo em ~35 psi penaliza drag | Menor | Pico por tipo: `psi_peak` no struct (street ~32, drag ~10); rampa saturando no pico | §2.4, §3.4 |
 | 7c `T_amb` sem default | Menor | Default 25 °C na §2.7 (ler da pista se exposto) | §2.7 |
 | 7d `T_brake_max` subdimensionado (3000/2000 ≈ 1,0 g) | Menor | Defaults 3600/2400 N·m (~1,2 g p/ ~1500 kg), ajustável por carro | §2.2 |
-| 7e `inertia_pitch` subestima massa traseira | Menor | Anotado: aproximação de caixa uniforme; CAD/calibração substitui | §2.1 |
+| 7e `inertia_pitch` subestima massa traseira | Menor | Anotado: aproximação de caixa uniforme; CAD/calibração substitui **(fórmula corrigida na v2.4: `(L² + H_body²)/12` — o `h_cg²` era ad hoc)** | §2.1 |
 
-**Decisões registradas nesta revisão (v2.3):** (9) sinal do momento aero = `−F_aero_z·(x_cp − a_cg)`, derivado da regra da §0; (10) no stick da embreagem `omega_w` é SEMPRE projeção (nunca integrado 2×); (11) `T_clutch` no stick = torque transmitido (`T_eng − I_e·dω/dt`); (12) `T_reaction_motor = s_eng·T_clutch` — RWD longitudinal fica 0 (dupla contagem com anti-squat) e transversal usa ±1 conforme o sentido do crank; (13) TODOS os campos do eixo são LUMPED (2 rodas somadas). **NOTA ao revisor:** no item 4, a tabela proposta sugeria RWD → +1 / FWD → −1; a derivação da mão direita indica que em RWD longitudinal a reação do crank é de ROLL (sem pitch, wrap já coberto por `h_traction`) e que em transversal o sinal depende do sentido do crank/final drive. Solicitada confirmação na próxima revisão.
+**Decisões registradas nesta revisão (v2.3):** (9) sinal do momento aero = `−F_aero_z·(x_cp − a_cg)`, derivado da regra da §0; (10) no stick da embreagem `omega_w` é SEMPRE projeção (nunca integrado 2×); (11) `T_clutch` no stick = torque transmitido (`T_eng − I_e·dω/dt`); (12) `T_reaction_motor = s_eng·T_clutch` — RWD longitudinal fica 0 (dupla contagem com anti-squat) e transversal usa ±1 conforme o sentido do crank; (13) TODOS os campos do eixo são LUMPED (2 rodas somadas). **NOTA ao revisor:** no item 4, a tabela proposta sugeria RWD → +1 / FWD → −1; a derivação da mão direita indica que em RWD longitudinal a reação do crank é de ROLL (sem pitch, wrap já coberto por `h_traction`) e que em transversal o sinal depende do sentido do crank/final drive. **CONFIRMADO na v2.4:** a derivação da mão direita do revisor fecha a nota — longitudinal → roll (`s_eng = 0` evita dupla contagem com o axle wrap via `h_traction`) e transversal → pitch com `s_eng = ±1` conforme o sentido do crank. A fórmula fica anotada como aproximação de 1ª ordem (mounts; carcaça do diferencial/transaxle fora — §3.7).
 
 ### v2.2 — 2ª rodada de auditoria (2026-11-07)
 
@@ -764,5 +836,5 @@ else:
 
 ---
 
-**Próximo passo para o agente de código (atualizado v2.3):**  
-Implementar as estruturas da §2 (incluindo `mass_sprung`, `psi_peak`, `s_eng`, `stick_state`, `z_u`/`v_zu`, `shift_phase`, `engine_stalled`, `T_brake_max` e as constantes da §2.7) + o `global.phys_step` seguindo a ordem da §4 com os lags declarados, consumindo o `motor_torque` existente. **Bloqueantes (v2.2–v2.3):** reflexão de inércia `÷g²` e `T_load_eng ÷(g·eff)` (§3.2/§3.5); heave com `mass_sprung` (§3.7); sinal do momento aero `−F_aero_z·(x_cp−a_cg)` (§3.7); proibição de re-integrar `omega_w` no stick da embreagem (§3.2/§3.5/§4). Prioridade: (1) contato geométrico + DOF dianteiro + heave corrigido (§3.6/§3.7), (2) regimes da embreagem com reflexão correta, `T_clutch` de stick e cadeia do duplo stick (§3.2/§3.3), (3) stiction com histerese (§3.4), (4) bump/droop stops (§3.6), (5) wheelie bar (§3.11), (6) shift (§3.10) e stall com embreagem aberta (§3.9). Respeitar as convenções de sinal da §0. Testar isoladamente (checklist §7) antes de injetar no `obj_player_Step_0`.
+**Próximo passo para o agente de código (atualizado v2.4):**  
+Implementar as estruturas da §2 (incluindo `mass_sprung`, `tire_front`/`tire_rear` com `psi`/`temp` por eixo, `psi_peak`, `s_eng`, `stick_state`, `z_u`/`v_zu`, `shift_phase`, `engine_stalled`, `T_brake_max` e as constantes da §2.7) + o `global.phys_step` seguindo a ordem da §4 com os lags declarados, consumindo o `motor_torque` existente. **Bloqueantes (v2.2–v2.4):** reflexão de inércia `÷g²` e `T_load_eng ÷(g·eff)` (§3.2/§3.5); heave com `mass_sprung` (§3.7); sinal do momento aero `−F_aero_z·(x_cp−a_cg)` (§3.7); proibição de re-integrar `omega_w` no stick da embreagem (§3.2/§3.5/§4); pneu PER-AXLE `tire_front`/`tire_rear` com a §3.4 inteira rodando por eixo (§2.4); em duplo stick `vx/radius` prevalece sobre a projeção `omega_eng/g` (§3.2/§3.4). Prioridade: (1) contato geométrico + DOF dianteiro + heave corrigido (§3.6/§3.7), (2) regimes da embreagem com reflexão correta, `T_clutch` de stick e cadeia do duplo stick (§3.2/§3.3), (3) stiction com histerese e pneus per-axle (§3.4), (4) bump/droop stops (§3.6), (5) wheelie bar (§3.11), (6) shift (§3.10) e stall com embreagem aberta (§3.9). Respeitar as convenções de sinal da §0. Testar isoladamente (checklist §7, alvos numéricos da v2.4) antes de injetar no `obj_player_Step_0`.
