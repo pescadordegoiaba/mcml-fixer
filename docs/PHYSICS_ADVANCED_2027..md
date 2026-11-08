@@ -1,6 +1,6 @@
 # MCML Realistic Physics Spec (2D Drag Racing)
 
-**Versão:** v2.4 — 4ª rodada de auditoria (2026-11-07). Pneu PER-AXLE (`tire_front`/`tire_rear`), nota do `T_reaction_motor` FECHADA (física confirmada), precedência de `omega_w` em duplo stick declarada e Highway decidida como modo físico separado (§1.1). Histórico completo de correções na §9.  
+**Versão:** v2.6 — 6ª rodada de auditoria (2026-11-08). Corrigido o bug crítico da DUPLA CONTAGEM do aero (presente da v2.1 à v2.5): `F_aero_z` age UMA vez, no corpo sprung (Opção A — a carga por eixo herda via suspensão; fallback B declarado). Combined slip com o μ do regime (`mu_static_eff` em stick / `mu_eff` em slip). Defaults `rho`/`g` (§2.7), safety net anti-blowup de `vx` (§4), escopo "só câmbio manual" + bite point na fase 2 (§8), referência de calibração de `k_heat`/`k_cool` (§2.4/§7). Histórico completo de correções na §9.  
 **Status:** Especificação pronta para implementação.  
 **Alvo:** My Car My Life (GameMaker 1.4) via injeção GML/CSX do `mcml-fixer`.  
 **Objetivo:** Substituir a física artificial de tração/velocidade/RPM por um sistema emergente (torque → roda → pneu → chassi), sem clamps de velocidade ou redline duro.  
@@ -146,7 +146,8 @@ powertrain:
   omega_eng           // rad/s (nunca < 0 — clamp §3.1)
   inertia_eng         // kg·m²
   clutch_engagement   // 0..1 (pressão)
-  clutch_capacity_max // N·m
+  clutch_capacity_max // N·m — v2.6: a máquina de embreagem pressupõe CÂMBIO MANUAL
+                      //     (pedal 0–1, §3.2); automático/conversor = fase 2 (§8)
   gear                // int
   gear_ratios[]       // final já incluída; todas POSITIVAS — ré fora do escopo na
                       //     fase 1 (gear_ratio < 0 não modelado — v2.4, §8)
@@ -170,14 +171,17 @@ tire_front, tire_rear:   // DUAS structs separadas — v2.4: drag racing NUNCA t
                          //  referencia a sua (§2.2) e a §3.4 roda POR EIXO.
   mu_base             // pico (tire_front: street radial ~0.95 | tire_rear: drag radial
                       //      ~1.7, slick até ~2.0)
-  mu_static           // ≥ mu_base
+  mu_static           // ≥ mu_base (alimenta `mu_static_eff` — §3.4, v2.5)
   load_sensitivity    // 0.1–0.2 (μ cai com F_z)
   temp                // °C (estado dinâmico POR EIXO — o burnout aquece SÓ a traseira)
   psi                 // pressão (estado POR EIXO; afeta μ e Crr — input §2.6)
   psi_peak            // pressão de pico de mu_psi POR TIPO de pneu (v2.3):
                       //     street ~32 | drag ~10 — pneu drag PENALIZA pressão alta
-  k_heat              // coeficiente de aquecimento por potência de slip
-  k_cool              // coeficiente de resfriamento
+  k_heat              // coeficiente de aquecimento por potência de slip — SEM default de
+                      //      fábrica (v2.6): calibrar pelo §7 (burnout atinge o pico de μ
+                      //      ~90 °C em ~5 s; quase nada = lento demais, 100 °C+ = instantâneo)
+  k_cool              // coeficiente de resfriamento — idem (v2.6): entre o burnout e a
+                      //      largada (~10–30 s) a temp deve CAIR perceptivelmente, não zerar
 // v2.4: `T_amb` SAIU do struct — é da PISTA, não do pneu (default 25 °C na §2.7;
 // não duplicar estado)
 ```
@@ -226,9 +230,14 @@ constantes:
                       //        0.015 satura o cap 0.15 nesse erro; calibrar no §7)
   omega_idle          // rad/s — referência do idle (default ~84 ≈ 800 rpm)
   T_amb               // °C — ambiente da pista (default 25; ler da pista se o jogo expuser)
+  // Ambiente / gravidade (v2.6 — sem default, cada implementador escolheria um valor)
+  rho                 // kg/m³ — densidade do ar p/ F_drag/F_aero_z (§3.8); default 1.225
+                      //        (ISA, nível do mar, 15 °C); PISTA E DYNO usam o MESMO valor
+  g                   // m/s² — gravidade; default 9.81 — ÚNICA fonte p/ §3.4 (F_z0),
+                      //        §3.6 (peso m_u), §3.7 (peso sprung), §3.8
   // Tolerâncias numéricas
   eps_clutch          // rad/s — stick da embreagem (1.0, lado motor)
-  eps_stick           // m/s — stick do pneu (0.2)
+  eps_stick           // m/s — stick do pneu (0.2) e piso do kappa (v2.5 — §3.4)
   eps_lock            // rad/s — freio considerado travado (0.5)
 ```
 - Fonte única destes valores — não espalhar magic numbers pelo `phys_step`.
@@ -329,7 +338,7 @@ T_wheel = (T_clutch * gear_ratio * efficiency) / n_driven_axles   // LUMPED: tot
 **POR EIXO (v2.4):** todas as fórmulas desta seção rodam com a `tire` do PRÓPRIO eixo (`axle.tire`, §2.2/§2.4) — `psi`, `psi_peak`, `mu_base`, `mu_static`, `load_sensitivity`, `temp`, `k_heat`/`k_cool` são do pneu do eixo. O burnout aquece só o pneu traseiro; PSI dianteiro e traseiro são tunados separadamente.
 ```
 v_wheel = omega_w * radius
-kappa = (v_wheel - vx) / max(abs(vx), 0.5)
+kappa = (v_wheel - vx) / max(abs(vx), eps_stick)   // piso = 0.2 m/s (§2.7) — v2.5/R3: ver nota no fim da seção
 
 // Efeito de PSI (mapa simples, POR TIPO de pneu — v2.3: o pico fixo em ~35 psi
 // penalizava pneu drag esvaziado, o oposto do tuning que o jogo explora)
@@ -348,34 +357,61 @@ mu_load = 1 - load_sensitivity * (normal_load / F_z0_axle - 1)
 mu_eff = mu_base * mu_psi * max(mu_load, 0.05)      // clamp: mu_eff NUNCA ≤ 0
 mu_eff *= temp_factor(temp)
 
+// v2.5: aderência ESTÁTICA disponível — os mesmos fatores (psi/carga/temp)
+// degradam TAMBÉM o regime colado. Um ÚNICO valor alimenta o clamp do stick,
+// o threshold de quebra e o pico da curva de slip (abaixo): os três coincidem
+// POR CONSTRUÇÃO — a transição stick→slip não dá salto de força.
+mu_static_eff = mu_static * mu_psi * max(mu_load, 0.05) * temp_factor(temp)
+
 // temp_factor (auditoria 2.5) — piecewise linear entre âncoras:
 //   20 °C → 0.70  |  90 °C → 1.00  |  140 °C → 0.70
 //   fora da faixa: clamp em 0.70
 //   (fase 2 opcional: acima de 140 °C decai até 0.50 — pneu "gorduroso")
 
-// Curva simples (pico em ~0.2, depois queda)
+// Curva força×slip (v2.5 — Opção A da auditoria 5): o PICO é a aderência
+// ESTÁTICA disponível (mu_static_eff — o MESMO nível do clamp do stick) e a
+// cauda decai para o CINÉTICO (mu_eff). A v2.4 tinha o pico em mu_eff·N com o
+// clamp em mu_static·N: no instante da quebra a força caía de mu_static·N
+// para ~0 e só voltava a subir até mu_eff·N — "bog" de tração no launch/60-ft
+// (pneu real vai continuamente de mu_s para mu_k, sem vazio de força).
+// Nota: o slip sustentado passa de 0.6·mu_eff (cauda da v2.4) para mu_eff
+// (cinético pleno) — decisão explícita da Opção A, não acidente.
+mu_peak  = mu_static_eff                        // pico em slip ≈ 0.2 (nível estático)
+mu_slide = mu_eff                               // cauda cinética (computado acima)
 slip_abs = abs(kappa)
 if slip_abs < 0.2:
-    force_factor = slip_abs / 0.2
+    mu_curve = mu_peak * (slip_abs / 0.2)                    // rampa linear ao pico
 else:
-    force_factor = 1.0 - 0.4 * clamp((slip_abs - 0.2) / 0.5, 0, 1)
+    ratio    = clamp((slip_abs - 0.2) / 0.5, 0, 1)
+    mu_curve = mu_peak * (1 - ratio) + mu_slide * ratio      // decai p/ o cinético
 
-F_x_ss = mu_eff * normal_load * force_factor * sign(kappa)
+F_x_ss = mu_curve * normal_load * sign(kappa)
 ```
 
-**Stiction — máquina de estados POR EIXO com histerese (auditoria 1.3):**
+**Stiction — máquina de estados POR EIXO com histerese (auditoria 1.3); quebra e re-adesão por DEMANDA TOTAL (v2.5):**
 ```
 v_slip = v_wheel - vx
 
+// v2.5: T_demand_stick é a MESMA grandeza do clamp do F_x em stick — a demanda
+// TOTAL na interface pneu-solo (drive + freio + inércia da roda acompanhando o
+// carro). A quebra da v2.4 testava só T_wheel/r: IGNORAVA o freio (frenagem
+// forte nunca saía do stick — sem lockup, sem transição p/ o cinético) e o
+// termo de inércia (eixo dianteiro leve em wheelie não quebrava aderência).
+// T_brake_eff e a_x: do substep anterior (lags declarados — §4).
+T_demand_stick = T_wheel - T_brake_eff - I_eq_wheel * a_x / radius
+
 if stick_state:
-    if (not grounded) or abs(T_wheel / radius) > mu_static * normal_load:
+    if (not grounded) or abs(T_demand_stick / radius) > mu_static_eff * normal_load:
         stick_state = false                        // quebrou aderência
 else:
     if grounded
        and abs(v_slip) < eps_stick                 // roda e solo sincronizados (0.2 m/s — §2.7)
-       and abs(T_wheel / radius) < 0.9 * mu_static * normal_load:
-        stick_state = true                         // recuperou (histerese 0.9×)
-
+       and abs(T_demand_stick / radius) < 0.9 * mu_static_eff * normal_load:
+        stick_state = true                         // recuperou (histerese 0.9× sobre a MESMA
+                                                   // grandeza da quebra — v2.5/R2: se a
+                                                   // re-adesão testasse só T_wheel, frenagem
+                                                   // com T_wheel = 0 re-colidia e quebrava a
+                                                   // cada substep: chatter)
 if stick_state and grounded:
     omega_w = vx / radius                          // constraint cinemática — v2.4: em
                                                    // DUPLO STICK prevalece sobre a projeção
@@ -383,9 +419,10 @@ if stick_state and grounded:
                                                    // linha NUNCA usa omega_eng/g
     // v2.2: a constraint completa é domega_w/dt = a_x/r. Isolando F_x na equação
     // da roda (§3.5), esta é a força que mantém a roda sincronizada com o solo
-    // ENQUANTO o carro acelera (T_brake_eff e a_x: do substep anterior — lags §4).
-    F_x = clamp((T_wheel - T_brake_eff - I_eq_wheel * a_x / radius) / radius,
-                -mu_static*normal_load, +mu_static*normal_load)
+    // ENQUANTO o carro acelera. v2.5: clamp na aderência ESTÁTICA DISPONÍVEL
+    // (mu_static_eff — o MESMO valor do pico da curva: sem salto na transição).
+    F_x = clamp(T_demand_stick / radius,
+                -mu_static_eff*normal_load, +mu_static_eff*normal_load)
 else:
     F_x = F_x_ss
 ```
@@ -393,13 +430,21 @@ else:
 - Sem estado + histerese, o launch oscila stick/slip a cada substep e o carro "tremedeia" na largada (chatter).
 - **Termo de inércia no stick (v2.2):** sem `- I_eq_wheel·a_x/r`, `F_x = T_wheel/r` assume `a_x = 0` e subestima a força exatamente no launch (60-foot mais lento — viés sistemático na fase crítica).
 - `slip_power = abs(F_x * v_slip)` usa o `F_x` **deste substep** — a nova ordem do `phys_step` (§4) calcula `F_x` ANTES da temperatura (resolve a circularidade da auditoria 3.1).
+- **Continuidade da transição (v2.5):** no substep da quebra, `|F_x| = mu_static_eff·N` (clamp) e a curva atinge exatamente `mu_peak·N = mu_static_eff·N` em `slip ≈ 0.2` — sem degrau. Na rampa `0 → 0.2` a força passa por valores menores por poucos substeps (o próprio excesso de torque que causou a quebra atravessa a roda pela rampa, ~ms); depois o wheelspin sustenta em `mu_slide = mu_eff` — a queda estático→cinético de um pneu que "arrebentou" é física real; o que a v2.4 produzia de errado era o VAZIO de força na transição.
+- **R3 — piso do `kappa` (v2.5):** o piso `max(abs(vx), 0.5)` deixava uma roda TRAVADA em creep (line lock + burnout) dentro da RAMPA (`|kappa| < 0.2`): a frente "travada" segurava com uma fração da aderência e o carro rastejava ≈6 cm/s através do freio. Com o piso = `eps_stick` (0.2 m/s) o creep residual cai para ≈2–3 cm/s; se o burnout exigir imobilidade total, trocar por modelo de slip por VELOCIDADE abaixo de `eps_stick` (anotado na §8).
 
 **Combined slip (quando lateral ativo):**
 ```
-scale = min(1.0, mu_eff * normal_load / sqrt(F_x² + F_y² + 1e-6))
+// v2.6: o círculo usa o μ DO REGIME. Em stick o clamp de F_x é mu_static_eff·N
+// (> mu_eff·N); com mu_eff na escala, F_y ≠ 0 rebaixava F_x p/ mu_eff·N com a
+// roda AINDA COLADA — perda de tração em curva sem motivo físico. Na Arrancada
+// F_y ≡ 0 ⇒ scale = 1 sempre (zero efeito na fase 1 — §1.1).
+mu_circle = stick_state ? mu_static_eff : mu_eff
+scale = min(1.0, mu_circle * normal_load / sqrt(F_x² + F_y² + 1e-6))
 F_x *= scale
 F_y *= scale
 ```
+- `mu_circle` é a ponte entre os regimes do pneu e o traction circle: em stick a roda sustenta até `mu_static_eff·N` em QUALQUER direção (é o clamp do stick, §3.4); em slip, `mu_eff·N` (a cauda cinética da curva). Afeta SÓ a Highway (`F_y ≠ 0`, fase 2 — §1.1); teste da §7 atualizado (confere o μ do regime com `F_y` sintético).
 
 ### 3.5 Dinâmica da roda + freio como restrição
 ```
@@ -408,27 +453,48 @@ F_y *= scale
 I_eq_wheel = inertia_wheel + inertia_drivetrain     // eixo NÃO driven: só inertia_wheel
 I_eq_wheel * domega_w/dt = T_wheel - F_x * radius - T_brake_eff
 ```
-- Eixo em `stick_state` (pneu): pular a integração — `omega_w = vx / radius` (constraint, §3.4).
+- Eixo em `stick_state` (pneu): pular a integração — `omega_w = vx / radius` (constraint, §3.4); o `T_brake_eff` deste eixo segue a regra do stick (drag rolante / reação estática — quadro v2.5 abaixo).
 - **Eixo driven com embreagem em `stick` (`clutch_mode == "stick"`, v2.3): pular a integração TAMBÉM — `omega_w` já foi PROJETADO de `omega_eng` no §3.2.** Integrar 2× no mesmo substep (projeção + passo 9) acumulava erro e podia gerar salto de energia na largada (bug v2.3-2). Eixo NÃO driven e pneu em slip: integra normal com `I_eq_wheel`.
 - Eixo no ar: `F_x = 0`; integra só com `T_wheel` e `T_brake_eff`.
 - `F_x` e `T_brake_eff` são do EIXO (lumped, §2.2).
 
-**Freio por eixo (auditoria 4):** a demanda usa pedal + line lock + handbrake:
+**Freio por eixo (auditoria 4 — complementaridade reescrita v2.5):** a demanda usa pedal + line lock + handbrake:
 ```
 T_brake_demand = max(brake_pedal, line_lock (só front), handbrake (só rear)) * T_brake_max   // default por eixo: §2.2
 ```
-Aplicar como **restrição (complementaridade)** — mesma lógica da embreagem; força bruta oscila entre travar e destravar:
+Aplicar como **restrição (complementaridade)** — o freio **dissipa** energia: nunca inverte o sentido de `omega_w` e nunca aplica mais torque do que o necessário para segurar a roda:
 ```
 omega_pred = omega_w + (T_wheel - F_x*radius) / I_eq_wheel * dt    // passo SEM freio
 T_stop = I_eq_wheel * omega_pred / dt        // torque necessário p/ zerar neste substep
-if abs(omega_pred) < eps_lock (0.5 rad/s — §2.7) and T_brake_demand >= abs(T_stop):
-    omega_w = 0
-    T_brake_eff = clamp(T_stop, -T_brake_demand, +T_brake_demand)
+
+if T_brake_demand >= abs(T_stop):
+    omega_w = 0                              // TRAVA neste substep: a demanda segura
+    T_brake_eff = T_stop                     // o torque EXATO que mantém ω = 0 (≤ demanda)
 else:
+    // não trava: opõe-se ao movimento previsto. demanda < |T_stop| ⇒ |ω| cai
+    // SEM trocar de sinal — o freio nunca cruza zero nem "motoriza" a roda
     T_brake_eff = T_brake_demand * sign(omega_pred)
-    integrar normal
+    omega_w = omega_pred - sign(omega_pred) * T_brake_demand * dt / I_eq_wheel
+
+if T_brake_demand > 0 and abs(omega_w) < eps_lock (0.5 rad/s — §2.7):
+    omega_w = 0                              // snap: mata o pó numérico perto de 0
 ```
-Line lock + handbrake viabilizam o burnout de gameplay: dianteira travada, traseira girando.
+- **v2.5 (por que a reescrita):** o ramo de trava antigo exigia `|omega_pred| < eps_lock` **E** `T_brake_demand ≥ |T_stop|`. Com valores típicos (I ≈ 2 kg·m², T_brake_max ≈ 2400 N·m, dt = 1/240 s), o freio cheio move ω em ~5 rad/s por substep — muito mais que `eps_lock`: entre ~0,5 e ~5 rad/s a roda "não travava" e o ramo ELSE aplicava torque CHEIO na direção oposta à prevista — uma roda a +1 rad/s era lançada a ≈ −4 e devolvida: **o freio motorizava a roda no início do lockup** (chatter na frenagem forte). Agora a trava acontece SEMPRE que a demanda cobre `|T_stop|`.
+- **O clamp literal `omega_w = max(0, omega_w)` NÃO é adotado:** rollback/ré tem `ω < 0` legítimo (em stick `ω = vx/radius`; a §3.7 trata ré via `sign(vx)`). A garantia correta é outra — **o freio nunca gera nem inverte rotação**; `ω < 0` só por tração/impulso, nunca por freio.
+- **Eixo com o pneu em STICK** (a trava acima não se aplica — roda colada não "trava": o lockup passa pela QUEBRA de aderência via `T_demand_stick`): o `T_brake_eff` ainda precisa existir (alimenta o `F_x` do stick, a quebra e o `T_load_eng`):
+```
+if abs(vx) > eps_stick:
+    // ROLANDO (qualquer sentido): drag conhecido, reage no patch via F_x da §3.4
+    T_brake_eff = T_brake_demand * sign(omega_w)
+else:
+    // PARADO (|vx| ≤ eps_stick): freio ESTÁTICO — reage o torque líquido na roda
+    // até a capacidade (v2.5/R5: é o que SEGURA o foot-brake launch; sem isto o
+    // torque de drive passava direto e o carro atravessava o freio na largada)
+    T_brake_eff = clamp(T_wheel - I_eq_wheel * a_x / radius,
+                        -T_brake_demand, +T_brake_demand)
+```
+  ROLANDO colado, o freio não trava a roda (a reação passa pelo patch: `F_x = (T_wheel − T_brake_eff − I·a_x/r)/r`; se `|F_x| > mu_static_eff·N`, a §3.4 quebra o stick e SÓ ENTÃO a roda pode travar). PARADO, o freio estático segura o carro: com `|T_wheel| ≤ T_d` o `T_demand_stick` dá **zero** (carro imóvel de verdade, motor carregando contra o freio via `T_load_eng` — com risco real de stall, foot-brake launch); excedendo a capacidade, o excedente vira força/rastejo — como um carro real no freio.
+- Line lock + handbrake viabilizam o burnout de gameplay: dianteira travada, traseira girando.
 
 ### 3.6 Suspensão, contato e massa não suspensa (reescrito)
 
@@ -463,7 +529,9 @@ if grounded:
     v_zu = max(0, v_zu)                          // pouso INELÁSTICO
     travel = L_free - (z_mount_front - radius)
     travel_vel = -(vz + a_cg * cos(theta) * omega_pitch)   // v_zu = 0 em contato
-    normal_load = max(0, F_susp + mass_unsprung * g + F_df_front)
+    normal_load = max(0, F_susp + mass_unsprung * g)   // v2.6/Opção A: SEM termo aero direto —
+                                                 // o aero age no CORPO (§3.7) e chega AQUI
+                                                 // via F_susp (mola comprime/estende; §3.8)
 else:                                            // NO AR
     travel = L_free - (z_mount_front - z_u)
     travel_vel = -(vz + a_cg * cos(theta) * omega_pitch - v_zu)
@@ -481,8 +549,9 @@ else:                                            // NO AR
 z_u_rear = radius                                // restrição sempre ativa
 travel_rear = L_free - (z_mount_rear - radius)
 travel_vel_rear = -(vz - b_cg * cos(theta) * omega_pitch)
-normal_load = max(0, F_susp + mass_unsprung * g + F_df_rear)
+normal_load = max(0, F_susp + mass_unsprung * g)                    // v2.6/Opção A: idem dianteiro — sem termo aero direto
 ```
+- **Aero na carga por eixo (v2.6 — Opção A; bug da dupla contagem, §3.8):** `normal_load` NÃO tem termo aero. Da v2.1 à v2.5 o aero entrava 2× na carga (heave §3.7 E `+ F_df_axle` aqui): downforce de 1000 N somava ~2000 N ao solo (grip ~2× em carro com aero). Agora o caminho é o físico: aero no corpo → mola comprime/estende → `F_susp` → carga — com a defasagem real de ~0.1–0.2 s (uma batida da suspensão; irrelevante a substeps de 1/240 s). Lift extremo: o corpo sobe, a mola dianteira estende até o droop stop e o pull-off do DOF `z_u` solta a roda (mesma mecânica do wheelie); no eixo traseiro (cinemático), o `max(0,·)` protege. Se o teste de lift da §7 reclamar da FASE, migrar p/ o FALLBACK B (§3.8).
 - Com wheelie bar (§3.11), a traseira não levanta — a restrição cinemática é honesta.
 - Sem barra equipada (v2.4: a barra NUNCA "vence" — o modelo não tem stress/fadiga; "barra vencida" = sem barra): se `theta > 60°` → **game event "capotou"**; congela o pitch e encerra a passagem (a fase 1 não simula capotamento completo — ver §8).
 
@@ -495,10 +564,10 @@ normal_load = max(0, F_susp + mass_unsprung * g + F_df_rear)
 F_total_x = F_x_rear + F_x_front - sign(vx) * (F_drag + F_rolling)
 a_x = F_total_x / mass                          // massa TOTAL: sprung+unsprung transladam juntos
 
-// Heave (v2.2 — BUG CRÍTICO corrigido): o chassi é o corpo SPRUNG. `F_susp` NÃO
-// inclui o peso não suspenso (ele entra na FBD da roda: normal_load = F_susp +
-// m_u·g + F_df). Com `- mass*g` o peso m_u·g era contado 2× e, em repouso,
-// sum_F_z = -m_u·g ≠ 0 → o chassi afundava lentamente, sem achar equilíbrio.
+// Heave (v2.2 — BUG CRÍTICO corrigido; v2.6: o aero mora AQUI e SÓ aqui): o chassi
+// é o corpo SPRUNG. `F_susp` NÃO inclui o peso não suspenso (ele entra na FBD da
+// roda: normal_load = F_susp + m_u·g — §3.6). Com `- mass*g` o peso m_u·g era
+// contado 2× e, em repouso, sum_F_z = -m_u·g ≠ 0 → o chassi afundava lentamente.
 mass_sprung = mass - mass_unsprung_front - mass_unsprung_rear    // derivado no load (§2.1)
 sum_F_z = F_susp_front + F_susp_rear - mass_sprung * g + F_aero_z + F_bar
 az = sum_F_z / mass_sprung
@@ -542,20 +611,47 @@ T_reaction_motor = s_eng * T_clutch                 // T_clutch: torque transmit
 //   reação dos MOUNTS do motor; a reação da carcaça do diferencial (transaxle) não é
 //   modelada — aceitável na fase 1.
 ```
-- Cheque de sanidade estático (reescrito v2.2): em repouso, `sum_F_z = 0` exige `F_susp_front + F_susp_rear = mass_sprung * g` e o pitch exige `F_susp_front * a_cg = F_susp_rear * b_cg`. Somando as FBDs das rodas (`normal_load = F_susp + m_u·g + F_df`), as cargas no solo fecham `N_front + N_rear = mass * g` e o split segue a geometria (`N_front ≈ m*g*b_cg/L` — exato se a massa não suspensa respeita o mesmo weight bias).
+- Cheque de sanidade estático (reescrito v2.2; extendido ao aero na v2.6): em repouso, `sum_F_z = 0` exige `F_susp_front + F_susp_rear = mass_sprung * g` e o pitch exige `F_susp_front * a_cg = F_susp_rear * b_cg`. Somando as FBDs das rodas (`normal_load = F_susp + m_u·g` — Opção A, §3.6), as cargas no solo fecham `N_front + N_rear = mass * g` e o split segue a geometria (`N_front ≈ m*g*b_cg/L` — exato se a massa não suspensa respeita o mesmo weight bias). COM AERO em equilíbrio (v2.6): a heave exige `F_susp_front + F_susp_rear = mass_sprung*g − F_aero_z` e o momento `−F_aero_z·(x_cp − a_cg)` redistribui as molas ⇒ `N_front + N_rear = mass*g − F_aero_z` — downforce de 1000 N soma 1000 N (não 2000): é o teste de MAGNITUDE da §7.
 - A convenção de `F_aero_z` (lift-positivo, `ClA < 0` = downforce) resolve a ambiguidade da v2.0 — sem ela o carro "levitava" em alta velocidade (auditoria 3.2). O momento aerodinâmico vertical usa o braço LONGITUDINAL `x_cp` (força vertical aplicada a uma altura não gera pitch); o arrasto (horizontal) usa a altura `h_aero`.
 
 ### 3.8 Resistências e aerodinâmica
 ```
 F_drag   = 0.5 * rho * CdA * vx²                 // MAGNITUDE (≥ 0); o SINAL entra via
                                                  // sign(vx) na §3.7 (v2.2 — vale também em ré)
-F_aero_z = 0.5 * rho * ClA * vx²                 // lift-positivo; ClA < 0 = downforce
-F_df     = max(0, -F_aero_z)                     // magnitude do downforce
-F_df_front = F_df * (L - x_cp) / L               // split pelo CP
-F_df_rear  = F_df * x_cp / L
-F_rolling  = crr_psi_front * normal_load_front + crr_psi_rear * normal_load_rear   // MAGNITUDE; sinal via sign(vx) na §3.7 (v2.2)
+F_aero_z = 0.5 * rho * ClA * vx²                 // lift-positivo; ClA < 0 = downforce;
+                                                 // rho = 1.225 kg/m³ default (§2.7 — v2.6)
+// v2.6 (Opção A — DUPLA CONTAGEM corrigida; o bug existia da v2.1 à v2.5): o aero
+// age UMA vez, NO CORPO sprung (heave + pitch, §3.7). Até a v2.5 ele entrava
+// TAMBÉM na normal_load por eixo (`+ F_df_axle`, §3.6) — a mola já comprimia pelo
+// aero da heave e a carga somava de novo: downforce de 1000 N dava +2000 N no
+// solo (grip ~2× em carro com aero, trap speed ~3–5% alto; a v2.5, ao dar SINAL
+// ao split p/ consertar o lift, estendeu o bug ao lift — correção pela metade).
+// Agora a carga herda o aero VIA SUSPENSÃO: aero → corpo → mola comprime/estende
+// → F_susp → normal_load. Defasagem física ~0.1–0.2 s (uma batida da suspensão) —
+// o preço de ser literal; irrelevante a substeps de 1/240 s. O split abaixo NÃO
+// entra na carga: é o valor de EQUILÍBRIO p/ telemetria/assert (teste de
+// magnitude da §7) e a fórmula pronta do FALLBACK B.
+F_df_front = -F_aero_z * (L - x_cp) / L          // split de EQUILÍBRIO: + = downforce no
+                                                 //   dianteiro (em eq. N_front sobe por isso)
+F_df_rear  = -F_aero_z * x_cp / L                // idem, traseiro
+// FALLBACK B (pré-aprovado — SÓ se o teste de lift da §7 reclamar da fase ~0.15 s):
+// aero direto no EIXO — somar `+ F_df_axle` de volta na normal_load (§3.6) e
+// REMOVER `F_aero_z` da heave (§3.7). Mesmo equilíbrio (N = mass·g − F_aero_z),
+// resposta instantânea; menos literal (o aero deveria comprimir a mola).
+
+// v2.5: rolamento POR EIXO e SÓ com o pneu RODANDO EM ADERÊNCIA (stick). Em
+// slip (patinando/travado) o atrito longitudinal já vem da curva mu(kappa) da
+// §3.4 — somar crr·N dupla-contaria o cinético (~1–2% na frenagem c/ lockup).
+// Roda no ar: stick_state = false (§3.6) → resistência 0.
+F_rolling_front = 0;  F_rolling_rear = 0
+if stick_state_front:  F_rolling_front = crr_psi_front * normal_load_front
+if stick_state_rear:   F_rolling_rear  = crr_psi_rear  * normal_load_rear
+F_rolling = F_rolling_front + F_rolling_rear     // MAGNITUDE; sinal via sign(vx) na §3.7 (v2.2)
+// crr_psi_front = crr_psi(tire_front.psi, tire_front.psi_peak) — o mapa da §3.4
+// com a TIRE DO PRÓPRIO EIXO (v2.5: declarado; antes era só implícito)
 ```
-- `F_rolling` agora é POR EIXO com a carga real: roda no ar não gera resistência ao rolamento (consequência direta do wheelie).
+- `F_rolling` é POR EIXO com a carga real e SÓ com o pneu em stick (v2.5): roda no ar (`stick_state = false`, §3.6) ou em slip não gera resistência — o atrito do slip vem da curva `mu(kappa)` da §3.4 (consequência direta do wheelie e do lockup).
+- Re-adesão slip→stick (v2.6, nota cosmética): `F_rolling_axle` salta de 0 para `crr·N` em UM substep (degrau ~1% de μN — imperceptível no gameplay). Se um dia incomodar, interpolar ao longo de ~3 substeps; fase 2.
 - Defaults: `h_aero = h_cg`, `x_cp = a_cg` (CP no CG → só carga, sem momento de pitch).
 
 ### 3.9 Stall e restart do motor (auditoria 2.2)
@@ -627,14 +723,14 @@ else:
 3. **Torque do motor**: `motor_torque` existente + friction; checa stall (§3.9); obtém `T_eng`.
 4. **Determina regime da embreagem** e calcula `T_clutch` (§3.2) — usa `F_x` e `T_brake_eff` do substep anterior (lag declarado).
 5. **Atualiza `omega_eng`** conforme o regime; clamp `omega_eng ≥ 0` (§3.1).
-6. **Geometria e contato por eixo** (§3.6): `z_mount`, `grounded` (por geometria), `travel`, `travel_vel`, `F_susp` (com bump/droop stops), `normal_load` (com `F_df_axle`).
-7. **Para cada eixo grounded**: slip ratio → `mu_eff` (PSI, `temp_factor`, load sensitivity com clamp — TUDO com a tire do eixo, v2.4) → `F_x` via máquina de stiction (§3.4, com termo `- I_eq_wheel·a_x/r` usando o `a_x` do substep anterior); combined slip se lateral ativo (na Arrancada `F_y ≡ 0` — §1.1).
+6. **Geometria e contato por eixo** (§3.6): `z_mount`, `grounded` (por geometria), `travel`, `travel_vel`, `F_susp` (com bump/droop stops), `normal_load = max(0, F_susp + m_u·g)` — SEM termo aero direto (v2.6/Opção A: o aero chega via `F_susp` da heave/pitch — §3.6/§3.8).
+7. **Para cada eixo grounded**: slip ratio → `mu_eff` e `mu_static_eff` (PSI, `temp_factor`, load sensitivity com clamp — TUDO com a tire do eixo, v2.4/v2.5) → `F_x` via máquina de stiction (§3.4, com termo `- I_eq_wheel·a_x/r` usando o `a_x` do substep anterior; quebra/re-adesão por `T_demand_stick` — v2.5); combined slip se lateral ativo (na Arrancada `F_y ≡ 0` — §1.1).
 8. **Atualiza a temperatura do pneu DE CADA EIXO** (`dtemp/dt` via `slip_power`, estado per-axle — v2.4) usando o `F_x` **do passo 7** — sem circularidade (auditoria 3.1).
-9. **Integra `omega_w`** (§3.5): freio como restrição; eixo em stick do pneu segue constraint (`omega_w = vx/radius` — em duplo stick este valor PREVALECE sobre a projeção `omega_eng/g`, v2.4); **eixo driven com embreagem em `stick` NÃO integra (projeção do §3.2 — v2.3)**; eixo no ar gira livre com `T_wheel`.
+9. **Integra `omega_w`** (§3.5): freio como restrição de complementaridade pura (trava quando a demanda cobre `|T_stop|`; nunca inverte nem motoriza `omega_w` — v2.5); eixo em stick do pneu segue constraint (`omega_w = vx/radius` — em duplo stick este valor PREVALECE sobre a projeção `omega_eng/g`, v2.4) com `T_brake_eff` de drag rolante / reação estática (§3.5 — v2.5); **eixo driven com embreagem em `stick` NÃO integra (projeção do §3.2 — v2.3)**; eixo no ar gira livre com `T_wheel`.
 10. **Calcula forças e momentos no chassi** (§3.7): anti-squat, aerodinâmica (`F_aero_z`, `F_drag`), `F_rolling` por eixo e wheelie bar (§3.11 → `F_bar`).
 11. **Integra o chassi** (semi-implícito): `vx, vz, omega_pitch, x, z_cg, theta`.
 12. **Integra o DOF dianteiro** se no ar: `v_zu, z_u` (§3.6); checa pouso inelástico.
-13. **Substeps**: repete 2–4 vezes com `dt/substeps` se necessário.
+13. **Substeps**: repete 2–4 vezes com `dt/substeps` se necessário. Ao SAIR do loop, safety net `vx = clamp(vx, -150, 150)` (v2.6 — rede ANTI-BLOWUP, NÃO vmax de gameplay: 150 m/s = 540 km/h fica acima até de Top Fuel ~147 m/s, enquanto o ±100 do rascunho da auditoria viraria vmax acidental das classes extremas; se o clamp engajar, é bug — logar).
 14. **Expõe telemetria**: slip, normal_load, T_wheel, rpm, temp, psi (por eixo — v2.4), `stick_state`, `clutch_mode`, `shift_phase`, `engine_stalled`, `z_u`, `bar_grounded`.
 
 **Lags declarados dentro do substep (v2.2 — todos aceitáveis a dt ≈ 1/240 s; FAZEM PARTE do design: não reordenar os passos para "resolvê-los", isso reintroduz a circularidade que a §9 corrigiu):**
@@ -643,9 +739,11 @@ else:
 |---|---|---|
 | Passo 4 | `T_load_eng` usa `F_x` e `T_brake_eff` do substep anterior | Embreagem ↔ pneu sem ciclo (auditoria 3.3) |
 | Passo 6→7 | `mu_eff`/`F_x` usam `normal_load` derivado de `travel`/`theta` do substep anterior (`theta` só é integrado no passo 11) | Erro O(dt) na carga; 1/240 s é fino o bastante |
-| Passo 7 | `F_x` em stick usa `a_x` e `T_brake_eff` do substep anterior (§3.4) | Troca de lags com o passo 9, sem ciclo no MESMO substep |
+| Passo 7 | `F_x` e `T_demand_stick` (quebra/re-adesão) em stick usam `a_x` e `T_brake_eff` do substep anterior (§3.4 — v2.5) | Troca de lags com o passo 9, sem ciclo no MESMO substep |
 | Passo 8 | `slip_power` usa o `F_x` DESTE substep | Sem circularidade (auditoria 3.1) |
 | Passo 9 | `omega_w` do eixo driven em stick da embreagem NÃO integra — só projeção (§3.2) | Evita dupla integração/salto de energia (v2.3-2) |
+| Passo 10 | `F_drag`/`F_aero_z` usam o `vx` do substep anterior (`vx` só é integrado no passo 11 — v2.5) | Forças suaves em `vx`; erro O(dt) a 1/240 s |
+| Passo 6 | `normal_load` herda o aero via `travel`/`theta` do substep anterior (Opção A v2.6: sem termo aero direto na carga — §3.6/§3.8) | Defasagem física da suspensão (~0.1–0.2 s p/ assentar); em equilíbrio o split por eixo fecha por `x_cp` |
 
 ---
 
@@ -683,7 +781,9 @@ else:
   omega_eng = idle (~800 rpm ≈ 84 rad/s);  omega_w = 0 (2 eixos)
   clutch_pedal = 1 (aberta) ou input do jogador;  gear = 1 (ou N)
   temp = T_amb (2 eixos);  psi = default POR EIXO do carro (street/drag — v2.4)
-  stick_state = true (2 eixos);  engine_stalled = false
+  stick_state = true (2 eixos — v2.5: com line_lock + throttle no staging do burnout o
+                      traseiro quebra o stick no 1º substep, 4,2 ms @240 Hz: imperceptível;
+                      opcional iniciar false no modo burnout);  engine_stalled = false
   shift_phase = "none";  bar_grounded = false
   z_u = radius (2 eixos);  v_zu = 0
   ```
@@ -704,7 +804,7 @@ else:
 - **`T_clutch` no stick (v2.3)**: telemetria mostra `T_clutch = T_eng − inertia_eng·domega_eng/dt`, coerente com `T_wheel` e ≤ capacity.
 - **Reaction (v2.3)**: RWD longitudinal → `T_reaction_motor = 0` (wrap coberto pelo anti-squat); transversal → o nariz responde na direção declarada por `s_eng`.
 - **PSI por tipo (v2.3)**: pneu drag (traseiro) em ~10 psi → `mu_psi ≈ 1.05`; em 35 psi, penalizado. Street: o contrário.
-- **Burnout (auditoria 1.3)**: parado + line lock + throttle cheio → roda traseira gira (`stick_state` NÃO mata o spin), a temperatura do pneu TRASEIRO sobe (a dianteira fica ~T_amb — estado per-axle, v2.4) e `temp_factor` melhora μ até o pico; superaquecido (> 140 °C), μ cai de volta.
+- **Burnout (auditoria 1.3; alvo temporal v2.6)**: parado + line lock + throttle cheio → roda traseira gira (`stick_state` NÃO mata o spin), a temperatura do pneu TRASEIRO sobe (a dianteira fica ~T_amb — estado per-axle, v2.4) e `temp_factor` melhora μ até o pico — **~90 °C (pico) em ~5 s de burnout**: é isto que calibra `k_heat` (§2.4; 10 °C em 5 s = pneu nunca chega ao pico, 100 °C+ = instantâneo); superaquecido (> 140 °C), μ cai de volta; `k_cool`: entre o burnout e a largada (~10–30 s) a temp CAI perceptivelmente (não zera).
 - **Launch sem chatter**: `stick_state` não alterna mais que ~5×/s (log de debug na largada).
 - Launch com μ alto → 60-foot dentro dos alvos da tabela v2.4 (1,9–2,1 s p/ a classe de referência); com o termo de inércia do stick (v2.2), o 60-foot melhora vs. `T_wheel/r` puro (sem viés de `a_x = 0`).
 - **Wheelie real (auditorias 1.1/1.2)**: com CG alto + torque alto, `z_u_front > radius` (perda de contato GEOMÉTRICA), a roda cai, quica no damper e pousa inelasticamente sem explosão numérica.
@@ -712,14 +812,19 @@ else:
 - Anti-squat reduz o squat/wheelie de forma perceptível.
 - **Stall (auditoria 2.2 + v2.2)**: soltar a embreagem em rpm < `omega_stall` → motor morre, embreagem abre AUTOMATICAMENTE e só religa com ignição + pedal pisado; `omega_eng` nunca fica negativa (assert em todo frame).
 - **Troca de marcha (auditoria 2.3)**: ET com a sequência completa fica 0,2–0,4 s pior por troca que a troca instantânea (sanity do efeito no 1/4 mile).
-- **Clamps (auditoria 2.4)**: `assert mu_eff >= 0.05 * mu_base` e `assert omega_eng >= 0` em todo frame.
+- **Clamps (auditoria 2.4; limite relaxado v2.5)**: `assert mu_eff >= 0.03 * mu_base` (o 0.05 antigo falhava legitimamente: `mu_psi = 0.85` × `mu_load = 0.05` → `0.0425·mu_base < 0.05·mu_base`) e `assert omega_eng >= 0` em todo frame.
 - **Sinal de `F_aero_z` (auditoria 3.2)**: carro com `ClA < 0` NÃO levanta em alta velocidade; com `x_cp` à frente do CG, downforce mergulha o nariz.
+- **Aero sem dupla contagem (v2.6 — MAGNITUDE, não só comportamento)**: downforce `F_aero_z = −1000 N` em `vx` estável (~200 km/h, throttle parcial até o equilíbrio) → `N_front + N_rear ≈ mass·g + 1000` — da v2.1 à v2.5 fechava `mass·g + 2000` (aero na heave E na carga: grip ~2× em carro com aero) e os testes de COMPORTAMENTO acima passavam por erro disfarçado de realista. Conferir também o trap speed do carro com asa contra a tabela de alvos (a dupla contagem inflava ~3–5%).
+- **Lift com sinal nas cargas (v2.5; caminho v2.6)**: carro com `ClA > 0` (lift local) → `normal_load_front` CAI com vx² — agora VIA SUSPENSÃO (Opção A: o corpo sobe, a mola dianteira estende, `F_susp_front` cai; na v2.4 o lift entrava no pitch mas NÃO na carga e o teste antigo passava por acidente). Lift extremo → o droop stop esgota e o pull-off do DOF `z_u` solta a roda (perda de contato por geometria); magnitude `N_front + N_rear = mass·g − F_aero_z` (1×). Se a resposta for LENTA DEMAIS p/ o gameplay (fase da suspensão ~0.15 s), ativar o FALLBACK B (§3.8) e re-rodar este teste.
+- **Continuidade stick→slip no launch (v2.5)**: RWD com quebra de tração → no substep da quebra `|F_x_rear| = mu_static_eff·N` (clamp) e a curva atinge o MESMO valor no pico (`slip ≈ 0.2`) — sem degrau; `F_x_rear` NÃO fica abaixo de ~0.3·`mu_static_eff·N` por mais de 2–3 substeps consecutivos (o "bog" da v2.4 — queda de força por ~0.05–0.15 s — era invisível para o teste "wheelspin controlado").
+- **Lockup na frenagem (v2.5)**: pedal cheio → o eixo dianteiro TRANSITA stick→slip quando `|T_demand_stick|/r > mu_static_eff·N` (a v2.4 via só `T_wheel`: a frenagem ficava eternamente em stick — sem lockup, sem ABS natural); em slip, `omega_w` NUNCA troca de sinal por ação do freio (complementaridade §3.5) e `F_x_front` satura no cinético (`−mu_slide·N`).
+- **Foot-brake launch (v2.5/R5)**: parado com freio a fundo e torque de drive abaixo da capacidade do freio → o carro SEGURA (`T_brake_eff` estático reage o drive — §3.5) e o motor carrega contra o freio (risco real de stall); excedendo a capacidade, rasteja/quebra aderência como um carro real. Sem o freio estático, o carro atravessava o freio na largada.
 - **Weight bias**: com `a_cg ≠ b_cg`, o split estático segue `§3.7` (checar `F_susp_front*a_cg == F_susp_rear*b_cg` no equilíbrio).
 - Mudança de PSI (por eixo) altera μ e rolling resistance SÓ do eixo ajustado (v2.4).
 - Soltar acelerador → engine braking reduz velocidade.
 - Trap speed emerge do equilíbrio potência vs. arrasto (sem vmax artificial).
 - Dyno mostra a mesma curva de torque que a pista usa.
-- **Combined slip como interface (v2.4)**: na Arrancada `F_y ≡ 0` — o teste antigo ("na Highway, combined slip limita a soma") passava trivialmente e não validava nada; validar a fórmula de escala INJETANDO `F_y` sintético (p.ex. `F_y = 0.5·mu_eff·N`) e conferindo o clip de `F_x`. A validação lateral real (`delta`, yaw) pertence ao modo Highway (§1.1).
+- **Combined slip como interface (v2.4; regime v2.6)**: na Arrancada `F_y ≡ 0` — o teste antigo ("na Highway, combined slip limita a soma") passava trivialmente e não validava nada; validar a fórmula de escala INJETANDO `F_y` sintético (p.ex. `F_y = 0.5·mu_eff·N`) e conferindo o clip de `F_x` — em STICK o círculo satura em `mu_static_eff·N` (v2.6: `mu_circle` — com `mu_eff` a escala rebaixava `F_x` de `mu_static_eff·N` p/ `mu_eff·N` com a roda colada), em slip em `mu_eff·N`. A validação lateral real (`delta`, yaw) pertence ao modo Highway (§1.1).
 
 **Alvos numéricos de validação (v2.4)** — "razoável" não é mensurável; ET simulado fora da faixa de forma sistemática (> ~5%) indica bug de física, não tuning:
 
@@ -727,7 +832,7 @@ else:
 |---|---|---|---|
 | Street ~500 HP (drag radial atrás, launch bem executado) | 1,9–2,1 s | 11,5–12,0 s | ~190 km/h |
 
-- Demais classes: definir alvos calibrados contra tempos reais de referência ANTES de congelar a física.
+- **A classe street ~500 HP é a REFERÊNCIA DE ACEITAÇÃO da fase 1 (v2.6 — gate de implantação: a física só entra no jogo com esta tabela batendo).** Demais classes: definir alvos calibrados contra tempos reais de referência ANTES de congelar a física.
 
 ---
 
@@ -740,14 +845,57 @@ else:
 - Tire relaxation length (adicionar só se houver instabilidade).
 - Braço exato da wheelie bar no pitch (`h_bar·sin(theta)` — §3.7/§3.11): anotado na v2.2; entra na fase 2 junto com wheelies extremos.
 - Dinâmica térmica do PSI: `dP/dt = k_psi_heat*(temp - T_amb)` (~1–2 psi na Highway) — v2.4; na arrancada psi é estático.
+- Slip por VELOCIDADE em baixa velocidade (`|vx| < eps_stick`): com o piso do ratio o carro ainda rasteja ~2–3 cm/s com o eixo travado no line lock durante o burnout; trocar a rampa por velocidade de slip se o gameplay exigir imobilidade total (v2.5 — §3.4, reflexão R3).
 - Marcha à ré (`gear_ratio < 0`) — v2.4; a arrancada não precisa (posicionar no staging é gameplay).
 - Line lock no eixo correto para FWD (traseiro) — v2.4; a fase 1 pressupõe RWD.
+- Transmissão automática (conversor de torque: `K_factor`, `stall_ratio`, lock-up) — a fase 1 cobre SÓ CÂMBIO MANUAL com embreagem de pedal 0–1 (declaração v2.6, §2.3/§3.2); se o jogo expuser automáticos, spec própria na fase 2.
+- Clutch bite point não-linear — `capacity = clutch_engagement·capacity_max` é LINEAR no pedal (§3.2); um disco real engata sobretudo nos ÚLTIMOS ~30% do curso. Mapa `pedal → engagement` (lookup) na fase 2; sem ele o feathering/launch control fica "digital" (soltar metade do pedal quase não muda o comportamento).
 - Clutch térmico avançado e turbo lag dinâmico (já parcialmente no mod).
 - Colisão carro-carro.
 
 ---
 
 ## 9. Histórico de revisão (auditoria → correção)
+
+### v2.6 — 6ª rodada de auditoria (2026-11-08)
+
+| Item da auditoria | Severidade | Correção aplicada | Onde |
+|---|---|---|---|
+| 1 **Dupla contagem do aero**: `F_aero_z` na heave (§3.7) E `F_df_axle` na `normal_load` (§3.6) — em equilíbrio, downforce de 1000 N somava ~2000 N ao solo (grip ~2× em carro com aero: trap speed ~3–5% alto, Highway "cola" demais, lift dianteiro cortava a carga 2×). Bug presente da v2.1 à v2.5; a v2.5 (split com sinal) o AGRAVOU estendendo-o ao lift — correção pela metade. Testes §7 passavam porque validam COMPORTAMENTO, não magnitude | **Crítico (bloqueante antes de injetar)** | **Opção A** (fisicamente correta): aero age UMA vez, no CORPO sprung — `normal_load = max(0, F_susp + m_u·g)` SEM termo aero; a carga herda via mola (aero → corpo → `travel` → `F_susp` → `N`), com a defasagem física real de ~0.1–0.2 s (irrelevante a substeps de 1/240 s). `F_df_front/rear` re-rotulados: split de EQUILÍBRIO (telemetria/assert) + fórmula do FALLBACK B pré-aprovado (aero no eixo, resposta instantânea, caso o teste de lift reclame da fase). Cheque estático da §3.7 estendido ao aero + teste NOVO de magnitude na §7 (`N_f + N_r = mass·g − F_aero_z`) | §3.6, §3.7, §3.8, §4, §7 |
+| 2 Combined slip usava `mu_eff` também em STICK: com `F_y ≠ 0` (Highway), a escala rebaixava `F_x` de `mu_static_eff·N` (clamp do stick) p/ `mu_eff·N` — perda de tração em curva com a roda AINDA colada | Importante (Highway/fase 2) | `mu_circle = stick_state ? mu_static_eff : mu_eff` na escala; na Arrancada `F_y ≡ 0` ⇒ `scale = 1` (zero efeito na fase 1); teste da §7 (injeção de `F_y` sintético) atualizado p/ conferir o μ do regime | §3.4, §7 |
+| 3 Transmissão automática não coberta (máquina de embreagem = pedal manual 0–1) | Menor (escopo) | Declarado: **fase 1 = SÓ câmbio manual** (nota no §2.3); conversor (`K_factor`, `stall_ratio`) anotado na §8 p/ a fase 2 | §2.3, §8 |
+| 4 Clutch bite point LINEAR no pedal (disco real engata nos últimos ~30%) | Menor (fase 2) | Anotado na §8: mapa `pedal → engagement` não-linear na fase 2 (sem ele o feathering fica "digital") | §3.2, §8 |
+| 5 `rho` e `g` sem default (cada implementador escolheria) | Menor | Defaults na §2.7: `rho = 1.225 kg/m³` (ISA, nível do mar), `g = 9.81 m/s²` — pista e dyno obrigados à MESMA fonte | §2.7, §3.8 |
+| 6 `k_heat`/`k_cool` sem valores de referência (burnout aquece 10 °C ou 100 °C?) | Menor (calibração) | Guia no §2.4 + ALVO TEMPORAL no teste de burnout (§7): pico de μ (~90 °C) em ~5 s; resfriamento perceptível entre burnout e largada | §2.4, §7 |
+| 7 Sem clamp de segurança em `vx` (blowup contaminaria telemetria/UI) | Menor | Safety net no fim do `phys_step` (§4, passo 13): `vx = clamp(vx, −150, 150)` — 540 km/h fica ACIMA de qualquer classe legítima (Top Fuel ~147 m/s); engajou = bug, logar | §4 |
+| 8 `F_rolling` descontínuo na re-adesão slip→stick (0 → `crr·N` num substep, ~1% de μN) | Cosmético | Nota na §3.8: imperceptível; se incomodar, interpolar ~3 substeps (fase 2) | §3.8 |
+
+**Decisões registradas nesta revisão (v2.6):** (24) o aero atua UMA vez, no CORPO sprung (Opção A) — a `normal_load` não tem termo aero; o pneu sente o aero pela mola (~0.1–0.2 s de fase, física real) e o split por eixo emerge de `x_cp` via pitch em equilíbrio; (25) FALLBACK B pré-aprovado: se o teste de lift exigir resposta instantânea, mover o aero p/ o EIXO (`+F_df_axle` na carga, `F_aero_z` fora da heave) — equilíbrio idêntico; (26) o traction circle usa o μ do regime (`mu_static_eff` em stick / `mu_eff` em slip); (27) a classe street ~500 HP é a referência de ACEITAÇÃO da fase 1 (gate de implantação). **Nota de aplicação:** o clamp de `vx` foi fixado em ±150 m/s (a auditoria sugeria ±100): 100 m/s = 360 km/h ficaria ABAIXO do trap de Top Fuel (~147 m/s) e o safety net viraria vmax acidental das classes extremas.
+
+### v2.5 — 5ª rodada de auditoria (2026-11-07)
+
+| Item da auditoria | Severidade | Correção aplicada | Onde |
+|---|---|---|---|
+| 1 Descontinuidade stick→slip: pico da curva em `mu_eff·N` vs clamp em `mu_static·N` — na quebra F_x caía a ~0 por alguns substeps e voltava só até `mu_eff·N` (launch "boga") | **Bug físico (bloqueante p/ launch)** | Curva Opção A: `mu_peak = mu_static_eff` (nível ESTÁTICO com os fatores psi/carga/temp), `mu_slide = mu_eff` (cauda cinética — slip sustentado passa de 0.6·mu_eff p/ mu_eff, decisão da Opção A); clamp/quebra/pico coincidem POR CONSTRUÇÃO; nota de continuidade + teste novo na §7 (o "wheelspin controlado" antigo não capturava a queda) | §3.4, §7 |
+| 2 Break condition via só `T_wheel/r`: ignorava `T_brake_eff` (frenagem nunca saía do stick — sem lockup/ABS natural) e `I_eq_wheel·a_x/r` (eixo dianteiro leve em wheelie) | **Bug (bloqueante p/ frenagem)** | `T_demand_stick = T_wheel − T_brake_eff − I_eq_wheel·a_x/r` (a MESMA grandeza do clamp; lags §4) testa a quebra | §3.4, §4, §7 |
+| 3 Lift entrava no pitch (§3.7) mas NÃO na `normal_load` (`F_df = max(0, −F_aero_z)` zeronava o lift no split) | Inconsistência de design | Split aero COM SINAL por eixo: `F_df_front = −F_aero_z·(L−x_cp)/L`, `F_df_rear = −F_aero_z·x_cp/L`; `max(0, ·)` da carga clampa lift extremo (roda "flutua"); teste com `ClA > 0` adicionado — o antigo passava por acidente | §3.6, §3.8, §7 |
+| 4a `F_rolling` com roda travada/patinando (dupla contagem do cinético, ~1–2%) | Menor | `F_rolling_axle = 0` fora do stick — o atrito em slip vem da curva `mu(kappa)`; `crr_psi_axle = crr_psi(tire_axle.psi, tire_axle.psi_peak)` declarado per-axle | §3.8 |
+| 4b Lag de `vx` em `F_drag`/`F_aero_z` (passo 10 vs integração no 11) não declarado | Menor | Linha nova na tabela de lags da §4 | §4 |
+| 4c `assert mu_eff ≥ 0.05·mu_base` falha com `mu_psi = 0.85` × `mu_load = 0.05` (= 0.0425) | Menor | Limite relaxado p/ `0.03·mu_base`, com a justificativa inline | §7 |
+| 4d `stick_state` inicial `true` + line lock: 1 frame "tracionado" antes de patinar | Menor (cosmético) | Nota na §6: quebra no 1º substep (4,2 ms @240 Hz) é imperceptível; init opcional `false` no staging de burnout | §6 |
+| 4e `omega_w` sem proteção contra inversão na frenagem | Menor na auditoria; **bug real MAIOR na re-derivação** | Freio como complementaridade PURA: trava sempre que `T_brake_demand ≥ \|T_stop\|` — o ramo antigo exigia `|omega_pred| < eps_lock` e, com I ≈ 2 kg·m², T_d ≈ 2400 N·m e dt = 1/240 s (freio cheio move ω ~5 rad/substep ≫ eps_lock), o ELSE aplicava torque CHEIO oposto ao previsto entre ~0,5 e ~5 rad/s: ω ≈ +1 era lançada a ≈ −4 — **o freio MOTORIZAVA a roda no lockup** (chatter); sem trava, `|ω|` cai sem trocar de sinal + snap `eps_lock` | §3.5, §7 |
+
+**Reflexão proativa — bugs latentes fechados além da auditoria (pedido do revisor "reflita sobre possíveis bugs")**
+
+| # | Bug latente | Correção | Onde |
+|---|---|---|---|
+| R1 | Fatores psi/carga/temp não degradavam a aderência ESTÁTICA (clamp/quebra em `mu_static·N` puro: pneu superaquecido mantinha o grip estático; pico factado < clamp → salto residual quando fatores < 1) | `mu_static_eff = mu_static·mu_psi·max(mu_load,0.05)·temp_factor` unifica clamp + threshold de quebra + pico da curva — os três degradam JUNTOS, sem salto (é o que torna a propriedade "pico = clamp" da Opção A literalmente verdadeira) | §3.4 |
+| R2 | Re-adesão testava `\|T_wheel/r\| < 0.9·mu_static·N`: com freio aplicado (T_wheel = 0) o pneu re-colidia e quebrava no substep seguinte — chatter na frenagem (só apareceria DEPOIS do item 2) | Re-adesão compara `T_demand_stick` (a MESMA grandeza da quebra) contra `0.9·mu_static_eff·N` | §3.4 |
+| R3 | Piso do `kappa` em 0.5 m/s: roda TRAVADA em creep ficava na RAMPA e o carro rastejava ≈6 cm/s através do line lock no burnout | Piso = `eps_stick` (0.2 m/s): creep residual ≈2–3 cm/s; slip por VELOCIDADE abaixo de `eps_stick` anotado na §8 | §3.4, §8 |
+| R4 | O clamp literal `omega_w = max(0, omega_w)` (sugestão 4e) quebraria o rollback/ré em stick (`ω = vx/r < 0` legítimo — §3.7/§7 tratam ré via `sign(vx)`) | Não adotado; a garantia correta é o freio nunca inverter/motorizar ω (item 4e) — um clamp global de sinal proibiria marcha à ré e rollback | §3.5 |
+| R5 | `T_brake_eff` indefinido p/ pneu em stick: no PARADO com freio, o torque de drive passava direto pela quebra (`T_demand = T_wheel`) e o carro ATRAVESSAVA o freio na largada — foot-brake launch impossível | Freio do eixo em stick: ROLANDO → drag `T_d·sign(ω)`; PARADO (`\|vx\| ≤ eps_stick`) → reação ESTÁTICA `clamp(T_wheel − I·a_x/r, ±T_d)` que segura o carro e carrega o motor via `T_load_eng` (risco real de stall — comportamento de foot-brake real) | §3.5, §7 |
+
+**Decisões registradas nesta revisão (v2.5):** (18) pico da curva = aderência estática DISPONÍVEL (`mu_static_eff`), cauda = cinético (`mu_eff`) — clamp, quebra e pico coincidem por construção (sem salto na transição); (19) quebra E re-adesão do stick usam a demanda total `T_demand_stick` (drive + freio + inércia; histerese 0.9× sobre a mesma grandeza); (20) split aero por eixo é COM SINAL (lift reduz `normal_load`, consistente com o momento de pitch; `max(0,·)` clampa lift extremo); (21) freio = complementaridade pura (trava sempre que a demanda cobre `|T_stop|`; nunca inverte nem motoriza `omega_w` — rollback com `ω < 0` continua legítimo); (22) freio estático no eixo parado em stick sustenta o foot-brake launch (`clamp(T_wheel − I·a_x/r, ±T_d)`); (23) piso do `kappa` = `eps_stick` (0.2 m/s).
 
 ### v2.4 — 4ª rodada de auditoria (2026-11-07)
 
@@ -806,7 +954,7 @@ else:
 |---|---|---|---|
 | 1.1 Contato por força, não cinemática | Crítico | `grounded` por geometria (`z_u ≤ radius`); airborne zera `normal_load`, `F_x` e `stick_state` | §0, §3.6, §4.6 |
 | 1.2 Roda no ar inconsistente (sem `m_u` DOF) | Crítico | **Decisão registrada: opção (b)** — `m_u` dinâmico no eixo dianteiro (`z_u`, `v_zu`); traseiro cinemático; pouso inelástico | §1, §2.2, §3.6, §4.12 |
-| 1.3 Stiction sem histerese (mata burnout / chatter) | Crítico | `stick_state` por eixo: quebra por `|T_wheel/r| > mu_static*N`, recupera com histerese `0.9×` e condição por `v_slip` (nunca por `vx`) | §2.2, §3.4, §6 |
+| 1.3 Stiction sem histerese (mata burnout / chatter) | Crítico | `stick_state` por eixo: quebra por `\|T_wheel/r\| > mu_static*N`, recupera com histerese `0.9×` e condição por `v_slip` (nunca por `vx`) | §2.2, §3.4, §6 |
 | 1.4 Bump/droop stops ausentes | Crítico | `k_bump`/`k_droop` (5–10 × spring_k) dentro da equação de `F_susp` | §2.2, §3.6 |
 | 2.1 Wheelie bar sem fórmula | Importante | Contato geométrico da ponta (`z_tip`), `F_bar` unilateral (mola + damping), entra em heave e pitch | §2.5, §3.11, §3.7 |
 | 2.2 `omega_eng` negativa (stall) | Importante | `omega_stall`, `engine_stalled` (combustão cortada), restart por ignição com starter; clamp `omega_eng ≥ 0` | §2.3, §2.6, §3.1, §3.9 |
@@ -836,5 +984,5 @@ else:
 
 ---
 
-**Próximo passo para o agente de código (atualizado v2.4):**  
-Implementar as estruturas da §2 (incluindo `mass_sprung`, `tire_front`/`tire_rear` com `psi`/`temp` por eixo, `psi_peak`, `s_eng`, `stick_state`, `z_u`/`v_zu`, `shift_phase`, `engine_stalled`, `T_brake_max` e as constantes da §2.7) + o `global.phys_step` seguindo a ordem da §4 com os lags declarados, consumindo o `motor_torque` existente. **Bloqueantes (v2.2–v2.4):** reflexão de inércia `÷g²` e `T_load_eng ÷(g·eff)` (§3.2/§3.5); heave com `mass_sprung` (§3.7); sinal do momento aero `−F_aero_z·(x_cp−a_cg)` (§3.7); proibição de re-integrar `omega_w` no stick da embreagem (§3.2/§3.5/§4); pneu PER-AXLE `tire_front`/`tire_rear` com a §3.4 inteira rodando por eixo (§2.4); em duplo stick `vx/radius` prevalece sobre a projeção `omega_eng/g` (§3.2/§3.4). Prioridade: (1) contato geométrico + DOF dianteiro + heave corrigido (§3.6/§3.7), (2) regimes da embreagem com reflexão correta, `T_clutch` de stick e cadeia do duplo stick (§3.2/§3.3), (3) stiction com histerese e pneus per-axle (§3.4), (4) bump/droop stops (§3.6), (5) wheelie bar (§3.11), (6) shift (§3.10) e stall com embreagem aberta (§3.9). Respeitar as convenções de sinal da §0. Testar isoladamente (checklist §7, alvos numéricos da v2.4) antes de injetar no `obj_player_Step_0`.
+**Próximo passo para o agente de código (atualizado v2.6):**  
+Implementar as estruturas da §2 (incluindo `mass_sprung`, `tire_front`/`tire_rear` com `psi`/`temp` por eixo, `psi_peak`, `s_eng`, `stick_state`, `z_u`/`v_zu`, `shift_phase`, `engine_stalled`, `T_brake_max` e as constantes da §2.7) + o `global.phys_step` seguindo a ordem da §4 com os lags declarados, consumindo o `motor_torque` existente. **Bloqueantes (v2.2–v2.6):** reflexão de inércia `÷g²` e `T_load_eng ÷(g·eff)` (§3.2/§3.5); heave com `mass_sprung` (§3.7); sinal do momento aero `−F_aero_z·(x_cp−a_cg)` (§3.7); proibição de re-integrar `omega_w` no stick da embreagem (§3.2/§3.5/§4); pneu PER-AXLE `tire_front`/`tire_rear` com a §3.4 inteira rodando por eixo (§2.4); em duplo stick `vx/radius` prevalece sobre a projeção `omega_eng/g` (§3.2/§3.4); curva do pneu com pico `mu_static_eff` + quebra/re-adesão por `T_demand_stick` (§3.4); freio complementar puro + freio estático no eixo em stick (§3.5); aero SEM termo direto na `normal_load` (Opção A v2.6 — age SÓ no corpo; §3.6/§3.7/§3.8). Prioridade: (1) contato geométrico + DOF dianteiro + heave corrigido (§3.6/§3.7), (2) regimes da embreagem com reflexão correta, `T_clutch` de stick e cadeia do duplo stick (§3.2/§3.3), (3) stiction com histerese e pneus per-axle (§3.4), (4) bump/droop stops (§3.6), (5) wheelie bar (§3.11), (6) shift (§3.10) e stall com embreagem aberta (§3.9). Respeitar as convenções de sinal da §0. Testar isoladamente (checklist §7, alvos numéricos da v2.4) antes de injetar no `obj_player_Step_0`.
