@@ -101,6 +101,13 @@ global.mod_dist_modelo = function() {
 };
 
 // limites fisicos por modelo: [ini_min, ini_max, cent_max, rpm_fim_max, vac_max, dwell_min, dwell_max, ganho_max]
+global.mod_num_txt = function(_v) {
+    if (!is_real(_v)) return string(_v);
+    var _r = round(_v * 1000) / 1000;
+    if (abs(_r - round(_r)) < 0.001) return string(round(_r));
+    return string(_r);
+};
+
 // [ini_min, ini_max, cent_max, rpm_fim_max, vac_max, dwell_min, dwell_max, ganho_max, corte_rpm]
 global.mod_dist_limites = function(modelo) {
     if (modelo == 1) return [0, 12, 20, 5500, 14, 38, 52, 45, 5500];
@@ -124,6 +131,8 @@ global.mod_dist_cfg = function() {
             dwell: global.mod_dist_def.dwell,
             desgaste: 0,
             ganho: global.mod_dist_def.ganho,
+            avanco_extra: 0,
+            retardo: 0,
             ver: 2
         };
     }
@@ -132,6 +141,8 @@ global.mod_dist_cfg = function() {
         car.dist_cfg.ver = 2;
         car.dist_cfg.ganho = 100;
     }
+    if (!variable_struct_exists(car.dist_cfg, "avanco_extra")) car.dist_cfg.avanco_extra = 0;
+    if (!variable_struct_exists(car.dist_cfg, "retardo")) car.dist_cfg.retardo = 0;
     return car.dist_cfg;
 };
 
@@ -271,6 +282,8 @@ global.mod_dist_fator = function() {
     var e = global.mod_dist_estado;
     var car = global.mod_dist_car();
     if (is_undefined(car)) return 1;
+    // o modelo fisico de distribuidor/carburador ja entrou no torque via fuel.eff
+    if (variable_global_exists("fuel_model_on") && global.fuel_model_on) return 1;
     if (global.mod_dist_tipo(car) != 1) return 1;
     var modelo = global.mod_dist_modelo();
     if (modelo <= 0) return 1;
@@ -330,6 +343,8 @@ global.mod_dist_dano_mult = function(peca, turbo) {
 global.mod_dist_dano = function() {
     var car = global.mod_dist_car();
     if (is_undefined(car)) return;
+    // fase 1 do modelo novo: knock so reduz torque. dano de pistao fica para a fase 2
+    if (variable_global_exists("fuel_model_on") && global.fuel_model_on) return;
     if (global.engine != 1) return;
     if (global.mod_dist_tipo(car) != 1) return;
     var modelo = global.mod_dist_modelo();
@@ -393,10 +408,21 @@ global.mod_dist_input = function() {
             if (keyboard_check_pressed(vk_right)) _d3 = 1;
             if (keyboard_check_pressed(vk_left)) _d3 = -1;
             if (_d3 != 0) {
-                switch (e.sel) {
-                    case 0: _cc.lenta = clamp(_cc.lenta + _d3, 20, 60); break;
-                    case 1: _cc.agulha = clamp(_cc.agulha + _d3, 20, 80); break;
-                    case 2: _cc.borboleta = clamp(_cc.borboleta + (_d3 * 5), 0, 100); break;
+                if (variable_global_exists("fuel_model_on") && global.fuel_model_on) {
+                    if (!variable_struct_exists(_cc, "jet")) _cc.jet = 80;
+                    if (!variable_struct_exists(_cc, "idle_turns")) _cc.idle_turns = 2.5;
+                    if (!variable_struct_exists(_cc, "pv")) _cc.pv = 6.5;
+                    switch (e.sel) {
+                        case 0: _cc.jet = clamp(_cc.jet + (_d3 * 0.25), 60, 100); break;
+                        case 1: _cc.idle_turns = clamp(_cc.idle_turns + (_d3 * 0.0625), 1, 4); break;
+                        case 2: _cc.pv = clamp(_cc.pv + (_d3 * 0.125), 3.5, 10.5); break;
+                    }
+                } else {
+                    switch (e.sel) {
+                        case 0: _cc.lenta = clamp(_cc.lenta + _d3, 20, 60); break;
+                        case 1: _cc.agulha = clamp(_cc.agulha + _d3, 20, 80); break;
+                        case 2: _cc.borboleta = clamp(_cc.borboleta + (_d3 * 5), 0, 100); break;
+                    }
                 }
                 e.aviso = "";
             }
@@ -405,6 +431,9 @@ global.mod_dist_input = function() {
                 _cc.lenta = round(_gi7 * 0.35);
                 _cc.agulha = round(_gi7 * 0.90);
                 _cc.borboleta = 50;
+                _cc.jet = 80;
+                _cc.idle_turns = 2.5;
+                _cc.pv = 6.5;
                 e.aviso = "carburador no padrao";
             }
         }
@@ -416,24 +445,29 @@ global.mod_dist_input = function() {
     if (modelo <= 0) return;
     var d = global.mod_dist_cfg();
     var lim = global.mod_dist_limites(modelo);
-    var _n = 10;
+    if (!variable_struct_exists(d, "avanco_extra")) d.avanco_extra = 0;
+    if (!variable_struct_exists(d, "retardo")) d.retardo = 0;
+    var _n = 12;
     if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod _n;
     if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + _n - 1) mod _n;
     var _dir = 0;
     if (keyboard_check_pressed(vk_right)) _dir = 1;
     if (keyboard_check_pressed(vk_left)) _dir = -1;
     if (_dir != 0) {
+        // passo 4x menor que o antigo: 1 vira 0,25, 2 vira 0,5, 100 vira 25
         switch (e.sel) {
-            case 0: d.avanco_inicial = clamp(d.avanco_inicial + _dir, lim[0], lim[1]); break;
-            case 1: d.cent_total = clamp(d.cent_total + (_dir * 2), 0, lim[2]); break;
-            case 2: d.rpm_inicio = clamp(d.rpm_inicio + (_dir * 100), 600, 4000); break;
-            case 3: d.rpm_fim = clamp(d.rpm_fim + (_dir * 100), 1200, lim[3]); break;
-            case 4: d.curva = clamp(d.curva + _dir, 0, 2); break;
-            case 5: d.vac_total = clamp(d.vac_total + _dir, 0, lim[4]); break;
-            case 6: d.vac_limiar = clamp(d.vac_limiar + (_dir * 0.1), -0.8, 1); break;
-            case 7: d.dwell = clamp(d.dwell + _dir, lim[5], lim[6]); break;
-            case 8: d.desgaste = clamp(d.desgaste + (_dir * 5), 0, 100); break;
-            case 9: d.ganho = clamp(d.ganho + (_dir * 5), 0, lim[7]); break;
+            case 0: d.avanco_inicial = clamp(d.avanco_inicial + (_dir * 0.25), lim[0], lim[1]); break;
+            case 1: d.cent_total = clamp(d.cent_total + (_dir * 0.5), 0, lim[2]); break;
+            case 2: d.rpm_inicio = clamp(d.rpm_inicio + (_dir * 25), 600, 4000); break;
+            case 3: d.rpm_fim = clamp(d.rpm_fim + (_dir * 25), 1200, lim[3]); break;
+            case 4: d.curva = clamp(d.curva + (_dir * 0.25), 0, 2); break;
+            case 5: d.vac_total = clamp(d.vac_total + (_dir * 0.25), 0, lim[4]); break;
+            case 6: d.vac_limiar = clamp(d.vac_limiar + (_dir * 0.025), -0.8, 1); break;
+            case 7: d.dwell = clamp(d.dwell + (_dir * 0.25), lim[5], lim[6]); break;
+            case 8: d.desgaste = clamp(d.desgaste + (_dir * 1.25), 0, 100); break;
+            case 9: d.ganho = clamp(d.ganho + (_dir * 1.25), 0, lim[7]); break;
+            case 10: d.avanco_extra = clamp(d.avanco_extra + (_dir * 0.25), 0, 15); break;
+            case 11: d.retardo = clamp(d.retardo + (_dir * 0.25), 0, 15); break;
         }
         e.aviso = "";
     }
@@ -442,7 +476,7 @@ global.mod_dist_input = function() {
 // roda o modelo com um parametro no valor dado e devolve o bonus resultante
 global.mod_dist_sim = function(_sel, _val) {
     var d = global.mod_dist_cfg();
-    var _k = ["avanco_inicial", "cent_total", "rpm_inicio", "rpm_fim", "curva", "vac_total", "vac_limiar", "dwell", "desgaste", "ganho"];
+    var _k = ["avanco_inicial", "cent_total", "rpm_inicio", "rpm_fim", "curva", "vac_total", "vac_limiar", "dwell", "desgaste", "ganho", "avanco_extra", "retardo"];
     var _old = variable_struct_get(d, _k[_sel]);
     variable_struct_set(d, _k[_sel], _val);
     global.mod_dist_calcular();
@@ -487,6 +521,13 @@ global.mod_carb_ui = function() {
     }
     var _labels = ["Gicle de lenta", "Agulha (media)", "Borboleta"];
     var _vals = [cfg.lenta, cfg.agulha, cfg.borboleta];
+    if (variable_global_exists("fuel_model_on") && global.fuel_model_on) {
+        if (!variable_struct_exists(cfg, "jet")) cfg.jet = 80;
+        if (!variable_struct_exists(cfg, "idle_turns")) cfg.idle_turns = 2.5;
+        if (!variable_struct_exists(cfg, "pv")) cfg.pv = 6.5;
+        _labels = ["Gicle principal", "Mistura de lenta (voltas)", "Power valve (inHg)"];
+        _vals = [cfg.jet, cfg.idle_turns, cfg.pv];
+    }
     for (var i = 0; i < 3; i++) {
         var _ry = _y + 54 + (i * 30);
         if (i == e.sel) {
@@ -496,7 +537,7 @@ global.mod_carb_ui = function() {
         draw_set_color(c_white);
         draw_text(_x + 30, _ry + 4, _labels[i]);
         draw_set_color(make_color_rgb(255, 210, 120));
-        draw_text(_x + _w - 120, _ry + 4, string(_vals[i]));
+        draw_text(_x + _w - 140, _ry + 4, global.mod_num_txt(_vals[i]));
     }
     var _d1 = ["Mistura em marcha lenta e na saida.",
                "Mistura na faixa media (cruzeiro).",
@@ -504,6 +545,14 @@ global.mod_carb_ui = function() {
     var _d2 = ["Baixo = pobre, falha frio. Alto = rico, afoga e suja.",
                "Baixo = pobre em media. Alto = rico, perde potencia e gasta.",
                "Baixo = lenta baixa. Alto = lenta alta e resposta brusca."];
+    if (variable_global_exists("fuel_model_on") && global.fuel_model_on) {
+        _d1 = ["Tamanho do gicle principal. Maior = mais rico.",
+               "Parafuso de mistura da lenta, em voltas.",
+               "Power valve abre no vacuo abaixo deste valor."];
+        _d2 = ["80 e o neutro (WOT ~13). 100 afoga. 60 empobrece.",
+               "2,5 voltas ~ 13,0 de AFR. Menos volta = mais pobre.",
+               "No WOT o vacuo cai e a valvula enriquece ~1 ponto."];
+    }
     draw_set_color(make_color_rgb(255, 235, 160));
     draw_text(_x + 30, _y + 158, _d1[e.sel]);
     draw_text(_x + 30, _y + 176, _d2[e.sel]);
@@ -719,11 +768,22 @@ global.motor_desgaste = function(_car) {
 global.motor_torque = function(_car, _rpm, _rpm_max, _afr) {
     var _m = global.motor_pecas(_car);
     _m *= global.phys_engine_fator(global.turbo, global.piston, global.litros);
-    var _carb = (global.mod_dist_tipo(_car) == 1) ? max(1, global.motor_campo(_car, "carburador")) : 0;
-    var _afr_eff = _afr;
-    if (_carb <= 0) _afr_eff = global.motor_afr_inj(_rpm, _rpm_max, global.turbo, global.fuel, global.injecao);
-    _m *= global.motor_mistura_mult(_afr_eff, _rpm, _rpm_max, global.turbo, global.fuel);
-    _m *= global.motor_ignicao_mult(global.ignicao);
+    var _usa_fuel = (variable_global_exists("fuel_model_on") && global.fuel_model_on);
+    var _usa_phys = (variable_global_exists("phys_v28_on") && global.phys_v28_on);
+    if (_usa_fuel && _usa_phys) {
+        // efficiency_afr / efficiency_timing rodam dentro do phys_step, por substep
+    } else if (_usa_fuel) {
+        var _thr = 0;
+        if (key_up) _thr = 1;
+        global.fuel_sys_step(_rpm, _thr, global.dt / 60);
+        _m *= global.fuel_sys.eff;
+    } else {
+        var _carb = (global.mod_dist_tipo(_car) == 1) ? max(1, global.motor_campo(_car, "carburador")) : 0;
+        var _afr_eff = _afr;
+        if (_carb <= 0) _afr_eff = global.motor_afr_inj(_rpm, _rpm_max, global.turbo, global.fuel, global.injecao);
+        _m *= global.motor_mistura_mult(_afr_eff, _rpm, _rpm_max, global.turbo, global.fuel);
+        _m *= global.motor_ignicao_mult(global.ignicao);
+    }
     _m *= global.motor_desgaste(_car);
     return _m;
 };
@@ -951,9 +1011,15 @@ global.mod_carb_cfg = function() {
         car.carb_cfg = {
             lenta: round(_gi * 0.35),
             agulha: round(_gi * 0.90),
-            borboleta: 50
+            borboleta: 50,
+            jet: 80,
+            idle_turns: 2.5,
+            pv: 6.5
         };
     }
+    if (!variable_struct_exists(car.carb_cfg, "jet")) car.carb_cfg.jet = 80;
+    if (!variable_struct_exists(car.carb_cfg, "idle_turns")) car.carb_cfg.idle_turns = 2.5;
+    if (!variable_struct_exists(car.carb_cfg, "pv")) car.carb_cfg.pv = 6.5;
     return car.carb_cfg;
 };
 
@@ -1108,11 +1174,13 @@ global.mod_dist_ui = function() {
     }
     var d = global.mod_dist_cfg();
     var lim = global.mod_dist_limites(modelo);
-    var _labels = ["Avanco inicial (graus)", "Centrifugo total (graus)", "RPM de inicio", "RPM de fim", "Curva (0 linear, 1 progressiva, 2 rapida)", "Vacuo total (graus)", "Limiar de vacuo (bar)", "Dwell (graus)", "Desgaste (%)", "Ganho (%)"];
-    var _vals = [d.avanco_inicial, d.cent_total, d.rpm_inicio, d.rpm_fim, d.curva, d.vac_total, d.vac_limiar, d.dwell, d.desgaste, d.ganho];
+    if (!variable_struct_exists(d, "avanco_extra")) d.avanco_extra = 0;
+    if (!variable_struct_exists(d, "retardo")) d.retardo = 0;
+    var _labels = ["Avanco inicial (graus)", "Centrifugo total (graus)", "RPM de inicio", "RPM de fim", "Curva (0 rua, 1 mista, 2 pista)", "Vacuo total (graus)", "Limiar de vacuo (bar)", "Dwell (graus)", "Desgaste (%)", "Ganho (%)", "Avanco extra (graus)", "Retardo (graus)"];
+    var _vals = [d.avanco_inicial, d.cent_total, d.rpm_inicio, d.rpm_fim, d.curva, d.vac_total, d.vac_limiar, d.dwell, d.desgaste, d.ganho, d.avanco_extra, d.retardo];
     var _i;
-    for (_i = 0; _i < 10; _i++) {
-        var _ry = _y + 50 + (_i * 30);
+    for (_i = 0; _i < 12; _i++) {
+        var _ry = _y + 46 + (_i * 24);
         if (_i == e.sel) {
             draw_set_color(make_color_rgb(60, 60, 90));
             draw_rectangle(_x + 300, _ry - 2, _x + _w - 14, _ry + 24, false);
@@ -1120,36 +1188,40 @@ global.mod_dist_ui = function() {
         draw_set_color(c_white);
         draw_text(_x + 310, _ry + 4, _labels[_i]);
         draw_set_color(make_color_rgb(255, 210, 120));
-        draw_text(_x + _w - 120, _ry + 4, string(_vals[_i]));
+        draw_text(_x + _w - 140, _ry + 4, global.mod_num_txt(_vals[_i]));
     }
     // explicacao do parametro selecionado + efeito real de min/atual/max
     var _d1 = ["Avanco inicial: ponto base da ignicao.",
                "Centrifugo total: avanco extra que sobe com o giro.",
                "RPM de inicio: giro onde a curva comeca a entrar.",
                "RPM de fim: giro onde o avanco satura.",
-               "Curva: formato da entrada das duas molas.",
+               "Curva: formato da entrada das duas molas. Passo 0,25.",
                "Vacuo total: avanco extra em carga leve.",
                "Limiar de vacuo: MAP onde o vacuo comeca.",
                "Dwell: tempo de carga da bobina.",
                "Desgaste do platinado e do rotor.",
-               "Ganho: quanto do teto do modelo o carro usa."];
+               "Ganho: quanto do teto do modelo o carro usa.",
+               "Avanco extra: soma graus em qualquer giro e carga.",
+               "Retardo: tira graus do ponto, em qualquer giro e carga."];
     var _d2 = ["Baixo = fraco e lento. Alto = torque, mas detona.",
                "Baixo = morre em alta. Alto = potencia, risco de knock.",
                "Baixo = antecipa cedo. Alto = amarrado ate subir.",
                "Baixo = trava cedo e perde alta. Alto = estica a curva.",
-               "0 linear, 1 progressiva, 2 rapida (mola leve).",
+               "0 rua, 1 mista, 2 pista. O meio fica entre as duas molas.",
                "Baixo = consumo pior. Alto = economia, mas detona.",
                "Baixo = entra cedo. Alto = so em vacuo forte.",
                "Baixo = faisca fraca. Alto = forte, bobina esquenta.",
                "Alto = faisca irregular e perda de potencia.",
-               "Baixo = pouco proveito. Alto = 100% do potencial."];
-    var _pmin = [lim[0], 0, 600, 1200, 0, 0, -0.8, lim[5], 0, 0];
-    var _pmax = [lim[1], lim[2], 4000, lim[3], 2, lim[4], 1, lim[6], 100, lim[7]];
+               "Baixo = pouco proveito. Alto = 100% do potencial.",
+               "0 nao mexe. Alto adianta o ponto alem da curva.",
+               "0 nao mexe. Alto atrasa o ponto e segura a detonacao."];
+    var _pmin = [lim[0], 0, 600, 1200, 0, 0, -0.8, lim[5], 0, 0, 0, 0];
+    var _pmax = [lim[1], lim[2], 4000, lim[3], 2, lim[4], 1, lim[6], 100, lim[7], 15, 15];
     var _bmin = global.mod_dist_sim(e.sel, _pmin[e.sel]);
     var _bmax = global.mod_dist_sim(e.sel, _pmax[e.sel]);
     draw_set_color(make_color_rgb(255, 235, 160));
-    draw_text(_x + 310, _y + 352, _d1[e.sel]);
-    draw_text(_x + 310, _y + 368, _d2[e.sel]);
+    draw_text(_x + 310, _y + 348, _d1[e.sel]);
+    draw_text(_x + 310, _y + 364, _d2[e.sel]);
     draw_set_color(make_color_rgb(255, 150, 150));
     draw_text(_x + 310, _y + 394, "min " + string(round(_bmin * 100)) + "%");
     draw_set_color(c_white);
@@ -1176,6 +1248,73 @@ global.cambio_passo = 0.01;
 global.cambio_limite_pct = 0.70;
 global.cambio_vmax = 1000;
 global.cambio_custo = 775;
+global.forja_motor_custo = 2500;
+
+// status da oficina: +70% de resistencia em relacao a peca original.
+// o desgaste (ja multiplicado pelo tipo da peca) cai para 1/1.7.
+global.forja_motor_tem = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return 0;
+    if (!variable_struct_exists(car, "forja_motor")) return 0;
+    if (car.forja_motor != 1) return 0;
+    if (!variable_struct_exists(car, "forja_pistao")) {
+        car.forja_pistao = 1;
+        car.forja_bielas = 1;
+        car.forja_cabecote = 1;
+        car.forja_comando = 1;
+        car.forja_vira = 1;
+        car.forja_bloco = 1;
+    }
+    return 1;
+};
+// flag na peca: +70% de resistencia sobre o valor que ela ja tinha (dano / 1.7)
+global.forja_motor_mult = function() {
+    if (global.forja_motor_tem() != 1) return 1;
+    return 1 / 1.7;
+};
+global.forja_motor_aplicar = function() {
+    var car = global.mod_dist_car();
+    if (is_undefined(car)) return 0;
+    if (global.forja_motor_tem() == 1) return 0;
+    car.forja_motor = 1;
+    car.forja_pistao = 1;
+    car.forja_bielas = 1;
+    car.forja_cabecote = 1;
+    car.forja_comando = 1;
+    car.forja_vira = 1;
+    car.forja_bloco = 1;
+    SaveAllCars();
+    SaveGame();
+    return 1;
+};
+global.forja_motor_txt = function() {
+    if (global.forja_motor_tem() == 1) {
+        switch (global.idioma) {
+            case 1: return "INTERNAL PARTS FORGED";
+            case 2: return "PIEZAS INTERNAS FORJADAS";
+            case 3: return "PEZZI INTERNI FORGIATI";
+            case 4: return "PIECES INTERNES FORGEES";
+            default: return "PEÇAS INTERNAS FORJADAS";
+        }
+    }
+    switch (global.idioma) {
+        case 1: return "FORGE INTERNAL ENGINE PARTS";
+        case 2: return "FORJAR PIEZAS INTERNAS DEL MOTOR";
+        case 3: return "FORGIARE PEZZI INTERNI DEL MOTORE";
+        case 4: return "FORGER LES PIECES INTERNES";
+        default: return "FORJAR PEÇAS INTERNAS NO MOTOR";
+    }
+};
+global.forja_motor_custo_txt = function() {
+    var _p = "$" + string(floor(global.forja_motor_custo));
+    switch (global.idioma) {
+        case 1: return "LABOR COST IS " + _p + "\n(+70% PART LIFE)";
+        case 2: return "LA MANO DE OBRA ES " + _p + "\n(+70% DE RESISTENCIA)";
+        case 3: return "LA MANODOPERA E " + _p + "\n(+70% DI RESISTENZA)";
+        case 4: return "LA MAIN-D'OEUVRE EST " + _p + "\n(+70% DE RESISTANCE)";
+        default: return "A MÃO DE OBRA É " + _p + "\n(+70% SOBRE O VALOR ORIGINAL)";
+    }
+};
 
 global.cambio_cfg = function() {
     return { rel_min: global.cambio_rel_min, rel_max: global.cambio_rel_max,
@@ -1272,8 +1411,10 @@ global.cg_validar = function(_car, _cand, _rel, _fab) {
     for (var i = 0; i < _n; i++) {
         var _v = global.cg_num(_cand[i], -1);
         if (_v < 0.20) return "marcha " + string(i + 1) + " invalida";
-        if (_v > 15.0) return "marcha " + string(i + 1) + " longa demais";
-        if (abs(_v - _fab[i]) > 0.70 * _fab[i]) {
+        // 25 cabe 1a curta no topo do diferencial (9.35 * 1.7 * 5.10/3.73)
+        if (_v > 25.0) return "marcha " + string(i + 1) + " longa demais";
+        // 0.06 absorve o arredondamento de 0.1 do slider em cima do limite
+        if (abs(_v - _fab[i]) > (0.70 * _fab[i] + 0.06)) {
             return "marcha " + string(i + 1) + " fora de +-70% de " + string(round(_fab[i] * 100) / 100);
         }
     }
@@ -1414,6 +1555,24 @@ global.cg_avisar = function(_txt) {
     global.cambio_aviso_txt = _txt;
 };
 
+// sobe ou desce a relacao final e leva as marchas junto (razao efetiva)
+global.cg_escala_rel = function(_novo) {
+    _novo = global.cg_num(_novo, global.cambio_rel_ref);
+    var _velho = _novo;
+    if (variable_global_exists("gear_rel_aplicada")) _velho = global.cg_num(global.gear_rel_aplicada, _novo);
+    if (_velho <= 0) _velho = _novo;
+    global.gear_temp_rel = _novo;
+    if (variable_global_exists("gear_temp_array") && is_array(global.gear_temp_array) && abs(_novo - _velho) > 0.00001) {
+        var _f = _novo / _velho;
+        var _n = array_length(global.gear_temp_array);
+        for (var i = 0; i < _n; i++) {
+            var _v = global.cg_num(global.gear_temp_array[i], 0);
+            if (_v > 0) global.gear_temp_array[i] = _v * _f;
+        }
+    }
+    global.gear_rel_aplicada = _novo;
+};
+
 global.cambio_gratis = 0;
 global.cambio_pode_pagar = function(_custo) {
     var _ok = (global.cash >= _custo) || (global.cambio_gratis == 1);
@@ -1440,6 +1599,16 @@ global.cg_confirmar = function(_custo) {
         _rel = global.cg_num(global.gear_temp_rel, _rel);
     }
     var _fab = _inst.original_ratios;
+    // original_ratios ja esta na relacao salva. A janela de +-70% acompanha
+    // a relacao que o jogador acabou de escolher, senao o diferencial longo
+    // recusa uma caixa que o slider deixou passar.
+    var _salvo = global.cg_rel(_car);
+    if (is_array(_fab) && _salvo > 0.01 && abs(_rel - _salvo) > 0.0001) {
+        var _k = _rel / _salvo;
+        var _fab2 = array_create(array_length(_fab));
+        for (var _fi = 0; _fi < array_length(_fab); _fi++) _fab2[_fi] = _fab[_fi] * _k;
+        _fab = _fab2;
+    }
 
     var _erro = global.cg_validar(_car, _cand, _rel, _fab);
     if (_erro != "") {
@@ -1692,7 +1861,7 @@ if (variable_global_exists("car_data") && is_array(global.car_data)
         if (variable_global_exists("carro")) {
             draw_text_transformed(_tx, _ty + 100, "FIPE $" + string(ValueCars()), 0.5, 0.5, 0);
         }
-        if (global.mod_dist_estado.knock > 0) {
+        if (global.mod_dist_estado.knock > 0.3 || (variable_global_exists("telemetry_knock") && global.telemetry_knock > 0.3)) {
             draw_set_color(make_color_rgb(255, 90, 60));
             draw_text_transformed(_tx, _ty + 118, "KNOCK", 0.6, 0.6, 0);
             draw_set_color(c_white);
@@ -1803,7 +1972,7 @@ struct_get_from_hash(global.item_db, variable_get_hash("manual_8m")).campo_val =
 
 # ================= CAMBIO: relacao final + limites =================
 REL_SCHEMA_OLD = _cq("data.gears_mod = [];")
-REL_SCHEMA_NEW = _cq("data.gears_mod = [];\ndata.relacao_final = 3.73;")
+REL_SCHEMA_NEW = _cq("data.gears_mod = [];\ndata.relacao_final = 3.73;\ndata.forja_motor = 0;")
 
 # ---- confirmacao do cambio: uma chamada so (teclado e mouse) ----
 CFK_OLD = _cq("""                        if (global.cash >= _custo_cambio)
@@ -1904,6 +2073,9 @@ REL_INIT_NEW = _cq("""                global.gear_selecionada = 0;
                 global.gear_botao_selecionado = 0;
                 global.gear_temp_rel = global.cambio_rel_valor();
                 global.gear_rel_original = global.gear_temp_rel;
+                global.gear_rel_aplicada = global.gear_temp_rel;
+                global.gear_aberto = array_create(obj_player.max_gears);
+                for (var _ia = 0; _ia < obj_player.max_gears; _ia++) global.gear_aberto[_ia] = global.gear_temp_array[_ia];
             }""")
 
 REL_COUNT_OLD = _cq("            var _custo_cambio = 775 * _marchas_modificadas;")
@@ -1967,12 +2139,12 @@ REL_ROW_NEW = _cq("""                    draw_set_halign(fa_center);
             if (global.gear_editando && global.gear_selecionada == _rel_idx && mouse_check_button(mb_left) && _rhover)
             {
                 var _rn = _rel_min + (clamp((mouse_x - _rbar_x) / 200, 0, 1) * (_rel_max - _rel_min));
-                global.gear_temp_rel = round(_rn * 100) / 100;
+                global.cg_escala_rel(round(_rn * 100) / 100);
             }
             if (global.gear_editando && global.gear_selecionada == _rel_idx)
             {
-                if (keyboard_check_pressed(vk_left)) global.gear_temp_rel = max(global.gear_temp_rel - global.cambio_passo, _rel_min);
-                if (keyboard_check_pressed(vk_right)) global.gear_temp_rel = min(global.gear_temp_rel + global.cambio_passo, _rel_max);
+                if (keyboard_check_pressed(vk_left)) global.cg_escala_rel(max(global.gear_temp_rel - global.cambio_passo, _rel_min));
+                if (keyboard_check_pressed(vk_right)) global.cg_escala_rel(min(global.gear_temp_rel + global.cambio_passo, _rel_max));
                 draw_set_halign(fa_center);
                 draw_set_color(c_yellow);
                 draw_text_transformed(_notebook_x, _notebook_y + 180, txt_ajuste_info, 0.7, 0.7, 0);
@@ -1986,6 +2158,49 @@ REL_COST_NEW = _cq('draw_text(_notebook_x + 80, _notebook_y + 176, "$" + string(
 
 REL_DBG_OLD = _cq('draw_text_transformed(_notebook_x, _notebook_y + 110, t + string(global.car_data[global.vehicles_array].gears_mod), 1, 1, 0);')
 REL_DBG_NEW = _cq('draw_text_transformed(_notebook_x, _notebook_y + 200, t + string(global.car_data[global.vehicles_array].gears_mod) + "  |  " + global.cambio_txt_rel() + ": " + string(global.car_data[global.vehicles_array].relacao_final), 1, 1, 0);')
+
+# ---- caderno, forja do motor e ponto no wideband ----
+GEAR_LOAD_OLD = _cq('                    global.gear_temp_array[i] = obj_player.original_ratios[i];')
+GEAR_LOAD_NEW = _cq('                    global.gear_temp_array[i] = obj_player.gear_ratios[i];')
+GEAR_BASE_OLD = _cq('            var _gear_original = array_create(obj_player.max_gears);\n            for (var i = 0; i < obj_player.max_gears; i++)\n            {\n                _gear_original[i] = obj_player.original_ratios[i];\n            }')
+GEAR_BASE_NEW = _cq('            if (!variable_global_exists("gear_temp_rel")) global.gear_temp_rel = global.cambio_rel_valor();\n            if (!variable_global_exists("gear_rel_original")) global.gear_rel_original = global.gear_temp_rel;\n            if (!variable_global_exists("gear_rel_aplicada")) global.gear_rel_aplicada = global.gear_temp_rel;\n            var _gear_original = array_create(obj_player.max_gears);\n            var _rel_salvo = global.gear_rel_original;\n            if (!is_real(_rel_salvo) || _rel_salvo <= 0.01) _rel_salvo = global.cambio_rel_ref;\n            var _krel = global.gear_temp_rel / _rel_salvo;\n            for (var i = 0; i < obj_player.max_gears; i++)\n            {\n                _gear_original[i] = obj_player.original_ratios[i] * _krel;\n            }')
+GEAR_COUNT_OLD = _cq('            var _marchas_modificadas = 0;\n            for (var i = 0; i < obj_player.max_gears; i++)\n            {\n                if (global.gear_temp_array[i] != _gear_original[i])\n                {\n                    _marchas_modificadas++;\n                }\n            }')
+GEAR_COUNT_NEW = _cq('            if (!variable_global_exists("gear_aberto") || !is_array(global.gear_aberto))\n            {\n                global.gear_aberto = array_create(obj_player.max_gears);\n                for (var _ia = 0; _ia < obj_player.max_gears; _ia++) global.gear_aberto[_ia] = global.gear_temp_array[_ia];\n            }\n            var _marchas_modificadas = 0;\n            var _rel_ab = global.gear_rel_original;\n            if (!is_real(_rel_ab) || _rel_ab <= 0.01) _rel_ab = global.gear_temp_rel;\n            for (var i = 0; i < obj_player.max_gears; i++)\n            {\n                var _agora = global.cg_num(global.gear_temp_array[i], 0) / max(0.01, global.gear_temp_rel);\n                var _antes = _agora;\n                if (i < array_length(global.gear_aberto)) _antes = global.cg_num(global.gear_aberto[i], 0) / max(0.01, _rel_ab);\n                if (abs(_agora - _antes) > 0.002) _marchas_modificadas++;\n            }')
+GEAR_MARK_OLD = _cq('                if (global.gear_temp_array[i] != _gear_original[i])\n                {\n                    draw_set_color(c_yellow);\n                    draw_text(_notebook_x - 130, _y, ">");\n                }\n                var _cor_valor = (global.gear_temp_array[i] != _gear_original[i]) ? 65280 : 16777215;')
+GEAR_MARK_NEW = _cq('                if (abs(global.gear_temp_array[i] - _gear_original[i]) > 0.02)\n                {\n                    draw_set_color(c_yellow);\n                    draw_text(_notebook_x - 130, _y, ">");\n                }\n                var _cor_valor = (abs(global.gear_temp_array[i] - _gear_original[i]) > 0.02) ? 65280 : 16777215;')
+GEAR_CLAMP_OLD = _cq('                    global.gear_temp_array[i] = round(_new_value * 10) / 10;')
+GEAR_CLAMP_NEW = _cq('                    global.gear_temp_array[i] = clamp(round(_new_value * 10) / 10, _valor_min, _valor_max);')
+MENU_SP_OLD = _cq('        var spacing = 90;')
+MENU_SP_NEW = _cq('        var spacing = 68;')
+MENU_TOTAL_OLD = _cq('        var tem_cambio = global.car_data[global.vehicles_array].cambio_mod == 1;\n        var total_opcoes = tem_cambio ? 4 : 3;')
+MENU_TOTAL_NEW = _cq('        var tem_cambio = global.car_data[global.vehicles_array].cambio_mod == 1;\n        var total_opcoes = tem_cambio ? 5 : 4;\n        var forja_opcao = 1;\n        var limites_opcao = tem_cambio ? 3 : 2;\n        var cancelar_opcao = tem_cambio ? 4 : 3;\n        var txt_forja = global.forja_motor_txt();\n        var txt_confirma_custo_forja = global.forja_motor_custo_txt();')
+MENU_KEYS_OLD = _cq('                    if (global.tiao_opcao_selecionada == 0)\n                    {\n                        global.tiao_confirmacao = 1;\n                        global.tiao_confirma_opcao = 0;\n                    }\n                    else if (global.tiao_opcao_selecionada == 1 && tem_cambio)\n                    {\n                        global.tiao_confirmacao = 2;\n                        global.tiao_confirma_opcao = 0;\n                    }\n                    else if ((global.tiao_opcao_selecionada == 2 && tem_cambio) || (global.tiao_opcao_selecionada == 1 && !tem_cambio))\n                    {\n                        global.tiao_confirmacao = 3;\n                        global.tiao_confirma_opcao = 0;\n                    }\n                    else if ((global.tiao_opcao_selecionada == 3 && tem_cambio) || (global.tiao_opcao_selecionada == 2 && !tem_cambio))\n                    {\n                        global.tiao_revisao = 0;\n                        play_audio(snd_gaveta_tiao_reverse);\n                    }')
+MENU_KEYS_NEW = _cq('                    if (global.tiao_opcao_selecionada == 0)\n                    {\n                        global.tiao_confirmacao = 1;\n                        global.tiao_confirma_opcao = 0;\n                    }\n                    else if (global.tiao_opcao_selecionada == forja_opcao)\n                    {\n                        if (global.forja_motor_tem() == 1)\n                        {\n                            play_audio(snd_feedback_esc);\n                        }\n                        else\n                        {\n                            global.tiao_confirmacao = 4;\n                            global.tiao_confirma_opcao = 0;\n                        }\n                    }\n                    else if (global.tiao_opcao_selecionada == 2 && tem_cambio)\n                    {\n                        global.tiao_confirmacao = 2;\n                        global.tiao_confirma_opcao = 0;\n                    }\n                    else if (global.tiao_opcao_selecionada == limites_opcao)\n                    {\n                        global.tiao_confirmacao = 3;\n                        global.tiao_confirma_opcao = 0;\n                    }\n                    else if (global.tiao_opcao_selecionada == cancelar_opcao)\n                    {\n                        global.tiao_revisao = 0;\n                        play_audio(snd_gaveta_tiao_reverse);\n                    }')
+MENU_CUSTO_OLD = _cq('                else if (global.tiao_confirmacao == 3)\n                {\n                    txt_custo = txt_confirma_custo_limites;\n                }')
+MENU_CUSTO_NEW = _cq('                else if (global.tiao_confirmacao == 3)\n                {\n                    txt_custo = txt_confirma_custo_limites;\n                }\n                else if (global.tiao_confirmacao == 4)\n                {\n                    txt_custo = txt_confirma_custo_forja;\n                }')
+MENU_CK_OLD = _cq('                        var custo_necessario = (global.tiao_confirmacao == 3) ? 3500 : 500;\n                        if (global.cash >= custo_necessario)')
+MENU_CK_NEW = _cq('                        var custo_necessario = 500;\n                        if (global.tiao_confirmacao == 3) custo_necessario = 3500;\n                        if (global.tiao_confirmacao == 4) custo_necessario = global.forja_motor_custo;\n                        if (global.cash >= custo_necessario)')
+MENU_CM_OLD = _cq('                    var custo_necessario = (global.tiao_confirmacao == 3) ? 3500 : 500;\n                    if (global.cash >= custo_necessario)')
+MENU_CM_NEW = _cq('                    var custo_necessario = 500;\n                    if (global.tiao_confirmacao == 3) custo_necessario = 3500;\n                    if (global.tiao_confirmacao == 4) custo_necessario = global.forja_motor_custo;\n                    if (global.cash >= custo_necessario)')
+MENU_AK_OLD = _cq('                            else if (global.tiao_confirmacao == 3)\n                            {\n                                global.cash -= 3500;\n                                global.tiao_revisao = 4;\n                            }')
+MENU_AK_NEW = _cq('                            else if (global.tiao_confirmacao == 3)\n                            {\n                                global.cash -= 3500;\n                                global.tiao_revisao = 4;\n                            }\n                            else if (global.tiao_confirmacao == 4)\n                            {\n                                if (global.forja_motor_aplicar() == 1) global.cash -= global.forja_motor_custo;\n                            }')
+MENU_AM_OLD = _cq('                        else if (global.tiao_confirmacao == 3)\n                        {\n                            global.cash -= 3500;\n                            global.tiao_revisao = 4;\n                        }')
+MENU_AM_NEW = _cq('                        else if (global.tiao_confirmacao == 3)\n                        {\n                            global.cash -= 3500;\n                            global.tiao_revisao = 4;\n                        }\n                        else if (global.tiao_confirmacao == 4)\n                        {\n                            if (global.forja_motor_aplicar() == 1) global.cash -= global.forja_motor_custo;\n                        }')
+MENU_ROW_OLD = _cq('                var cancelar_y = tem_cambio ? (revisar_y + (spacing * 3)) : (revisar_y + (spacing * 2));\n                cancelar_opcao = tem_cambio ? 3 : 2;')
+MENU_ROW_NEW = _cq('                var cancelar_y = limites_y + spacing;\n                cancelar_opcao = tem_cambio ? 4 : 3;')
+
+FORJA_SLOT_OLD = _cq('                if (mouse_check_button_pressed(mb_left) && hover_revisar)\n                {\n                    global.tiao_confirmacao = 1;\n                    global.tiao_confirma_opcao = 0;\n                    play_audio(snd_touch);\n                }\n                if (tem_cambio)\n                {\n                    var cambio_y = revisar_y + spacing;\n                    var hover_cambio = point_in_rectangle(mouse_x, mouse_y, center_x - 150, cambio_y - 20, center_x + 150, cambio_y + 20);\n                    var cor_cambio = (global.tiao_opcao_selecionada == 1 || hover_cambio) ? global.red : 16777215;\n                    draw_text_outline_transformed(center_x, cambio_y, txt_cambio, 0, cor_cambio, 2, font_scale, font_scale);\n                    if (hover_cambio)\n                    {\n                        global.tiao_opcao_selecionada = 1;\n                    }\n                    if (mouse_check_button_pressed(mb_left) && hover_cambio)\n                    {\n                        global.tiao_confirmacao = 2;\n                        global.tiao_confirma_opcao = 0;\n                        play_audio(snd_touch);\n                    }\n                }\n                var limites_y = tem_cambio ? (revisar_y + (spacing * 2)) : (revisar_y + spacing);\n                limites_opcao = tem_cambio ? 2 : 1;')
+FORJA_SLOT_NEW = _cq('                if (mouse_check_button_pressed(mb_left) && hover_revisar)\n                {\n                    global.tiao_confirmacao = 1;\n                    global.tiao_confirma_opcao = 0;\n                    play_audio(snd_touch);\n                }\n                var forja_y = revisar_y + spacing;\n                var hover_forja = point_in_rectangle(mouse_x, mouse_y, center_x - 240, forja_y - 22, center_x + 240, forja_y + 22);\n                var cor_forja = (global.tiao_opcao_selecionada == forja_opcao || hover_forja) ? global.red : 16777215;\n                if (global.forja_motor_tem() == 1) cor_forja = (global.tiao_opcao_selecionada == forja_opcao || hover_forja) ? global.gold : 65280;\n                draw_text_outline_transformed(center_x, forja_y, txt_forja, 0, cor_forja, 2, font_scale * 0.78, font_scale * 0.78);\n                if (hover_forja) global.tiao_opcao_selecionada = forja_opcao;\n                if (mouse_check_button_pressed(mb_left) && hover_forja)\n                {\n                    if (global.forja_motor_tem() == 1)\n                    {\n                        play_audio(snd_feedback_esc);\n                    }\n                    else\n                    {\n                        global.tiao_confirmacao = 4;\n                        global.tiao_confirma_opcao = 0;\n                        play_audio(snd_touch);\n                    }\n                }\n                if (tem_cambio)\n                {\n                    var cambio_y = revisar_y + (spacing * 2);\n                    var hover_cambio = point_in_rectangle(mouse_x, mouse_y, center_x - 150, cambio_y - 20, center_x + 150, cambio_y + 20);\n                    var cor_cambio = (global.tiao_opcao_selecionada == 2 || hover_cambio) ? global.red : 16777215;\n                    draw_text_outline_transformed(center_x, cambio_y, txt_cambio, 0, cor_cambio, 2, font_scale, font_scale);\n                    if (hover_cambio)\n                    {\n                        global.tiao_opcao_selecionada = 2;\n                    }\n                    if (mouse_check_button_pressed(mb_left) && hover_cambio)\n                    {\n                        global.tiao_confirmacao = 2;\n                        global.tiao_confirma_opcao = 0;\n                        play_audio(snd_touch);\n                    }\n                }\n                var limites_y = revisar_y + (spacing * (tem_cambio ? 3 : 2));\n                limites_opcao = tem_cambio ? 3 : 2;')
+WB64_OLD = _cq('            if (global.car_data[global.vehicles_array].carburador <= 0)\n            {\n                draw_text_transformed(783, 672, "" + string(_lbd), 1.1, 1.1, 0);\n            }\n            else\n            {\n                draw_set_halign(fa_center);\n                draw_text_transformed(801, 672, "" + string(global.afr), 0.95, 0.95, 0);\n            }')
+WB64_NEW = _cq('            if (global.mod_dist_tipo(global.car_data[global.vehicles_array]) == 1)\n            {\n                draw_set_halign(fa_center);\n                draw_text_transformed(801, 672, string_format(global.ignicao, 0, 1), 0.85, 0.85, 0);\n            }\n            else\n            {\n                draw_text_transformed(783, 672, "" + string(_lbd), 1.1, 1.1, 0);\n            }')
+WBNT_OLD = _cq('        if (global.car_data[global.vehicles_array].carburador <= 0)\n        {\n            draw_text_transformed(_x - (42 * _scale), _y - (210 * _scale), string(_lbd), 2.4 * _scale, 2.4 * _scale, 0);\n        }\n        else\n        {\n            draw_set_halign(fa_center);\n            draw_text_transformed(_x - (3 * _scale), _y - (210 * _scale), string(global.afr), 2.1 * _scale, 2.1 * _scale, 0);\n        }')
+WBNT_NEW = _cq('        if (global.mod_dist_tipo(global.car_data[global.vehicles_array]) == 1)\n        {\n            draw_set_halign(fa_center);\n            draw_text_transformed(_x - (3 * _scale), _y - (210 * _scale), string_format(global.ignicao, 0, 1), 1.8 * _scale, 1.8 * _scale, 0);\n        }\n        else\n        {\n            draw_text_transformed(_x - (42 * _scale), _y - (210 * _scale), string(_lbd), 2.4 * _scale, 2.4 * _scale, 0);\n        }')
+FORJA_DESG_OLD = _cq('    return arg2 * fator;')
+FORJA_DESG_NEW = _cq('    var _fm = 1;\n    if (variable_global_exists("forja_motor_mult")) _fm = global.forja_motor_mult();\n    return arg2 * fator * _fm;')
+FORJA_MULT_OLD = _cq('        return mult * 0.35;')
+FORJA_MULT_NEW = _cq('        return mult * 0.35 * global.forja_motor_mult();')
+FORJA_CAM_OLD = _cq('            car.vcambio -= desgaste_proporcional(global.torque, global.maxtorque, multiply * 1.5);')
+FORJA_CAM_NEW = _cq('            car.vcambio -= desgaste_proporcional(global.torque, global.maxtorque, multiply * 1.5) / global.forja_motor_mult();')
 
 VM1_OLD = _cq("""if (_gearlimit > 400)
 {
@@ -2072,7 +2287,8 @@ TOUGE_NEW = _cq("kmh = clamp(kmh + (_fecha * 0.3), 0, global.cambio_vmax);")
 
 PT_TARGET_OLD = _cq("""_target_speed = min(global.kmh + _acceleration, _gearlimit);
         if (global.kmh < _gearlimit)""")
-PT_TARGET_NEW = _cq("""_acceleration *= (1 - global.pt_em_corte());
+PT_TARGET_NEW = _cq("""if (variable_global_exists("phys_v28_on") && global.phys_v28_on && (room == Avenida || room == Drag || room == Rua || room == Autodromo || room == Online_Rua || room == Online_Autodromo)) _acceleration = 0;
+        _acceleration *= (1 - global.pt_em_corte());
         if (global.pt_shift_t > 0) _acceleration *= 0.15;
         global.cg_vmax_aero = global.aero_vmax_kmh();
         global.cg_acel_livre = _acceleration;
@@ -2089,6 +2305,81 @@ AERO_DRAG_NEW = _cq("""    var _desacel_arrasto = global.aero_drag_units();""")
 
 PT_SHIFT_OLD = _cq("play_audio(snd_gearchange);")
 PT_SHIFT_NEW = _cq("global.pt_shift_t = global.pt_shift_time; play_audio(snd_gearchange);")
+
+FUEL_GML = pathlib.Path(__file__).with_name("fuel_model.gml").read_text(encoding="utf-8")
+PHYS_GML = pathlib.Path(__file__).with_name("phys_v28.gml").read_text(encoding="utf-8")
+PHYS_FRAME = r'''
+if (variable_global_exists("phys_v28_on") && global.phys_v28_on) {
+    if (variable_global_exists("phys_moved") && global.phys_moved) {
+        // a funcao nasceu na room Start e nao enxerga as variaveis do player.
+        // copia aqui, no Step, e amarra self no obj_player.
+        global.phys_in_up = key_up ? 1 : 0;
+        global.phys_in_down = key_down ? 1 : 0;
+        global.phys_in_clutch = key_clutch ? 1 : 0;
+        global.phys_in_brake = key_brake ? 1 : 0;
+        global.phys_in_clutch_t = clutch;
+        global.phys_in_borra = _borrachao;
+        var _passo = method(id, global.phys_v28_frame);
+        _passo();
+    } else if (variable_global_exists("phys") && !is_undefined(global.phys)) global.phys.held = 1;
+}
+// carburado fora da fisica: a ECU de injecao tinha escrito o mapa no campo
+// de ignicao, e o wideband mostrava AFR. O ponto do distribuidor entra aqui,
+// depois desse mapa. Na sala com fisica o phys_step ja gravou o ponto.
+if (variable_global_exists("fuel_model_on") && global.fuel_model_on) {
+    var _nt_rodou = (variable_global_exists("phys_v28_on") && global.phys_v28_on && variable_global_exists("phys_moved") && global.phys_moved);
+    if (!_nt_rodou && variable_global_exists("car_data") && is_array(global.car_data)) {
+        var _ntc = global.car_data[global.vehicles_array];
+        if (global.mod_dist_tipo(_ntc) == 1) {
+            var _nt_thr = 0;
+            if (variable_instance_exists(id, "key_up") && key_up) _nt_thr = 1;
+            global.fuel_sys_step(global.rpm, _nt_thr, global.dt / 60);
+        }
+    }
+}
+'''
+PHYS_RPM_OLD = _cq("""    if (global.rpm > 0)
+    {
+        var half_rpm = global.car_data[global.vehicles_array].rpm / 2;""")
+PHYS_RPM_NEW = _cq("""    if (variable_global_exists("phys_v28_on") && global.phys_v28_on && variable_global_exists("phys") && !is_undefined(global.phys)) global.rpm = global.phys.omega * 9.5492965855;
+    if (global.rpm > 0)
+    {
+        var half_rpm = global.car_data[global.vehicles_array].rpm / 2;""")
+PHYS_MOVE_OLD = _cq("""if (room == Drag || room == Rua || room == Autodromo || room == Online_Rua || room == Online_Autodromo)
+{
+    if (launch_activ == 0)
+    {
+        move = key_down - key_up;
+        hspd = global.kmh / 2.7;""")
+PHYS_MOVE_NEW = _cq("""if (room == Drag || room == Rua || room == Autodromo || room == Online_Rua || room == Online_Autodromo)
+{
+    if (launch_activ == 0)
+    {
+        move = key_down - key_up;
+        global.phys_kmh_used = global.kmh;
+        global.phys_moved = 1;
+        global.phys_scroll = 0;
+        hspd = global.kmh / 2.7;""")
+PHYS_AVE_OLD = _cq("""if (room == Avenida)
+{
+    move = key_down - key_up;
+    hspd = global.kmh / 2.7;""")
+PHYS_AVE_NEW = _cq("""if (room == Avenida)
+{
+    move = key_down - key_up;
+    global.phys_kmh_used = global.kmh;
+    global.phys_moved = 1;
+    global.phys_scroll = 1;
+    hspd = global.kmh / 2.7;""")
+PHYS_HIT_OLD = _cq("""            hspd = 0;
+            global.kmh = 0;
+        }
+        if (room == Autodromo && global.kmh > 100)""")
+PHYS_HIT_NEW = _cq("""            hspd = 0;
+            global.kmh = 0;
+            global.phys_hit = 1;
+        }
+        if (room == Autodromo && global.kmh > 100)""")
 
 PATCH = f'''using System;
 using UndertaleModLib;
@@ -2176,7 +2467,7 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0",
 // 2) re: mesma fisica, relacao da re
 g.QueueFindReplace("gml_Object_obj_player_Step_0",
     "var _base_acceleration = (global.torque * global.hp) / (global.weight * 375);",
-    "var _base_acceleration = global.phys_base(global.torque, gear_ratios[2], _pc.raio, global.weight * 1000, global.phys_k(global.hp, _pc.raio, gear_ratios[0]), _pc.eficiencia, global.phys_mu(global.car_data[global.vehicles_array].pneu, global.heat_tire), _pc.share);",
+    "var _pcr = global.phys_cfg(); var _base_acceleration = global.phys_base(global.torque, gear_ratios[2], _pcr.raio, global.weight * 1000, global.phys_k(global.hp, _pcr.raio, gear_ratios[0]), _pcr.eficiencia, global.phys_mu(global.car_data[global.vehicles_array].pneu, global.heat_tire), _pcr.share);",
     false);
 
 // 3) _gear_resistance sai da cadeia (relacao real ja entrou na base)
@@ -2313,6 +2604,26 @@ g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_NAV_OLD}", "{REL_NAV_N
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_ROW_OLD}", "{REL_ROW_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_COST_OLD}", "{REL_COST_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{REL_DBG_OLD}", "{REL_DBG_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{GEAR_LOAD_OLD}", "{GEAR_LOAD_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{GEAR_BASE_OLD}", "{GEAR_BASE_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{GEAR_COUNT_OLD}", "{GEAR_COUNT_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{GEAR_MARK_OLD}", "{GEAR_MARK_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{GEAR_CLAMP_OLD}", "{GEAR_CLAMP_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_SP_OLD}", "{MENU_SP_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_TOTAL_OLD}", "{MENU_TOTAL_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_KEYS_OLD}", "{MENU_KEYS_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_CUSTO_OLD}", "{MENU_CUSTO_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_CK_OLD}", "{MENU_CK_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_CM_OLD}", "{MENU_CM_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_AK_OLD}", "{MENU_AK_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_AM_OLD}", "{MENU_AM_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{MENU_ROW_OLD}", "{MENU_ROW_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_0", "{FORJA_SLOT_OLD}", "{FORJA_SLOT_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiin_Draw_64", "{WB64_OLD}", "{WB64_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_noguiintech_Draw_0", "{WBNT_OLD}", "{WBNT_NEW}", false);
+g.QueueFindReplace("gml_GlobalScript_desgate_proporcional", "{FORJA_DESG_OLD}", "{FORJA_DESG_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{FORJA_MULT_OLD}", "{FORJA_MULT_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Alarm_3", "{FORJA_CAM_OLD}", "{FORJA_CAM_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM1_OLD}", "{VM1_NEW}", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{VM2_OLD}", "{VM2_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{FATOR_OLD}", "{FATOR_NEW}", false);
@@ -2335,6 +2646,15 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_UP_AUTO_OLD}", "{PT_UP_A
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_BAND_OLD}", "{PT_BAND_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_SPEEDRES_OLD}", "{PT_SPEEDRES_NEW}", true);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PT_SHIFT_OLD}", "{PT_SHIFT_NEW}", true);
+
+// fisica v2.8: o passo real substitui a aceleracao artificial do jogador
+g.QueueAppend("gml_RoomCC_Start_0_Create", {csx_str(FUEL_GML)});
+g.QueueAppend("gml_RoomCC_Start_0_Create", {csx_str(PHYS_GML)});
+g.QueueAppend("gml_Object_obj_player_Step_0", {csx_str(PHYS_FRAME)});
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PHYS_RPM_OLD}", "{PHYS_RPM_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PHYS_MOVE_OLD}", "{PHYS_MOVE_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PHYS_AVE_OLD}", "{PHYS_AVE_NEW}", false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0", "{PHYS_HIT_OLD}", "{PHYS_HIT_NEW}", false);
 
 g.Import();
 ScriptMessage("MARK distribuidor=v2 instalado");
