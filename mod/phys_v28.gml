@@ -59,11 +59,19 @@ global.phys_v28_axle = function(_name, _driven, _radius, _mu, _mu_s, _peak, _mu_
 
 global.phys_v28_reset = function() {
     var _m = global.weight;
+    var _tr = 2;
+    var _pneu_ai = -1;
+    var _car_id = global.vehicles_array;
+    if (variable_global_exists("phys_ai_spec") && !is_undefined(global.phys_ai_spec)) {
+        _m = global.phys_ai_spec.mass;
+        _tr = global.phys_ai_spec.tr;
+        _pneu_ai = global.phys_ai_spec.pneu;
+        _car_id = -1000;
+    }
     if (is_undefined(_m) || _m <= 0) _m = 1.4;
     if (_m < 50) _m *= 1000;
     if (_m < 400) _m = 1400;
-    var _tr = 2;
-    if (variable_global_exists("car_data") && variable_global_exists("vehicles_array")) {
+    if (_pneu_ai < 0 && variable_global_exists("car_data") && variable_global_exists("vehicles_array")) {
         _tr = global.car_data[global.vehicles_array].tracao;
     }
     var _uf = 70;
@@ -83,7 +91,8 @@ global.phys_v28_reset = function() {
     var _cf = 0.4 * 2 * sqrt(_kf * _ms * _b / _L);
     var _cr = 0.4 * 2 * sqrt(_kr * _ms * _a / _L);
     var _pneu = 0;
-    if (variable_global_exists("car_data")) _pneu = global.car_data[global.vehicles_array].pneu;
+    if (_pneu_ai >= 0) _pneu = _pneu_ai;
+    else if (variable_global_exists("car_data")) _pneu = global.car_data[global.vehicles_array].pneu;
     var _mu_f = 0.95;
     var _ms_f = 1.15;
     var _mu_r = 0.95;
@@ -99,7 +108,7 @@ global.phys_v28_reset = function() {
     _rear.psi = _pk_r;
     var _hbar = _h - 0.05;
     global.phys = {
-        held: 1, car: global.vehicles_array, mass: _m, sprung: _ms,
+        held: 1, car: _car_id, mass: _m, sprung: _ms,
         ix: _ms * (_L * _L + 0.25) / 12, h: _h, a: _a, b: _b, L: _L,
         has: 0, seng: (_tr == 1) ? -1 : 0, haero: _h, xcp: _a,
         cda: 1.0, cla: 0,
@@ -235,9 +244,17 @@ global.phys_v28_sub = function(_dt) {
     var _tcomb = 0;
     if (!p.stalled) {
         _tcomb = global.torque * _thr;
-        if (variable_global_exists("fuel_model_on") && global.fuel_model_on) {
+        if (variable_global_exists("fuel_model_on") && global.fuel_model_on && !(variable_global_exists("phys_ai_run") && global.phys_ai_run)) {
             global.fuel_sys_step(p.omega * 9.5492965855, _thr, _dt);
             _tcomb = global.torque * _thr * global.fuel_sys.eff;
+            if (global.fuel_sys.engine_failure_pending) {
+                p.stalled = 1;
+                _tcomb = 0;
+            } else if (global.fuel_sys.choke_on) {
+                p.w_idle = 115.2;
+            } else {
+                p.w_idle = 83.8;
+            }
         }
         if (is_undefined(_tcomb)) _tcomb = 0;
         if (p.omega > p.red) {
@@ -273,9 +290,10 @@ global.phys_v28_sub = function(_dt) {
         var _wref = _r.driven ? _r.omega : _f.omega;
         var _delta = p.omega - _wref * _g;
         var _cap = p.eng * p.cap;
-        // pe fora, a embreagem segura o torque deste giro. se a capacidade
-        // ficar abaixo do motor, o giro foge para o corte com o carro ainda lento.
-        if (p.eng >= 0.9 && abs(p.teng) > _cap) _cap = abs(p.teng) * 1.2;
+        // pe fora, a embreagem fica travada na marcha. tem de cobrir o motor
+        // e a carga refletida: numa relacao longa a carga passa da capacidade,
+        // o regime vira slip com delta ~ 0 e o carro trava com o giro colado.
+        if (p.eng >= 0.9) _cap = max(_cap, abs(p.teng) * 1.2, abs(p.tload) * 1.2);
         var _slip = p.slip_next || abs(_delta) > p.eps_c || abs(p.tload) > _cap;
         p.slip_next = 0;
         if (_slip) {
@@ -301,8 +319,8 @@ global.phys_v28_sub = function(_dt) {
         var _coeff = _dt * (1 / _ie + (_g * _k) / _iw);
         var _rhs = _del + p.teng * _dt / _ie + _g * _ext * _dt / _iw;
         var _tsync = (_coeff > 0.0000001) ? (_rhs / _coeff) : 0;
-        if (abs(_del) < 0.000001) p.tcl = 0;
-        else if (global.phys_v28_sgn(_tsync) == global.phys_v28_sgn(_del) && abs(_tsync) <= abs(p.tcl)) p.tcl = _tsync;
+        // delta ~ 0: o torque ja foi definido pela carga. zerar apagava a forca.
+        if (abs(_del) >= 0.000001 && global.phys_v28_sgn(_tsync) == global.phys_v28_sgn(_del) && abs(_tsync) <= abs(p.tcl)) p.tcl = _tsync;
         p.omega = max(0, p.omega + ((p.teng - p.tcl) / _ie) * _dt);
         if (abs(_del) >= 0.000001 && abs(p.tcl - _tsync) < 0.000001) {
             var _ws = p.omega / _g;
@@ -316,7 +334,7 @@ global.phys_v28_sub = function(_dt) {
         var _ieq = _ie + _iwsum / (_g * _g);
         var _dom = (p.teng - p.tload) / _ieq;
         var _cap2 = p.eng * p.cap;
-        if (p.eng >= 0.9 && abs(p.teng) > _cap2) _cap2 = abs(p.teng) * 1.2;
+        if (p.eng >= 0.9) _cap2 = max(_cap2, abs(p.teng) * 1.2, abs(p.tload) * 1.2);
         p.tcl = p.teng - _ie * _dom;
         if (abs(p.tcl) > _cap2 + 0.000001) {
             p.slip_next = 1;
@@ -384,18 +402,6 @@ global.phys_v28_sub = function(_dt) {
     // 9 roda
     global.phys_v28_wheel(_f, p.twf, _dt);
     global.phys_v28_wheel(_r, p.twr, _dt);
-    // pe fora, pneu grudado e carro ja andando: corta giro que fugiu da marcha
-    if (p.eng >= 0.9 && !p.stalled && _g > 0 && abs(p.vx) >= 2.2) {
-        var _axl = _r.driven ? _r : _f;
-        if (_axl.stick && _axl.grounded) {
-            var _alvo = (p.vx / _axl.radius) * _g;
-            if (p.omega > _alvo + 41.9) {
-                if (_alvo < p.w_idle) _alvo = p.w_idle;
-                p.omega = _alvo;
-                _axl.omega = p.vx / _axl.radius;
-            }
-        }
-    }
 
     // 10-11 chassi
     var _vd = p.vx * p.vx;
@@ -438,6 +444,19 @@ global.phys_v28_sub = function(_dt) {
         p.theta += p.wp * _dt;
         p.vx += _axx * _dt;
         p.ax = _axx;
+        // pe fora e embreagem grudada: o giro acompanha a marcha na velocidade
+        // que este passo acabou de produzir. patinando, o motor pode subir.
+        // abaixo da lenta nao crava: a roda saia com o conta-giros em 800.
+        if (p.eng >= 0.9 && !p.stalled && p.mode == "stick" && _g > 0 && abs(p.vx) >= 2.2) {
+            var _axl = _r.driven ? _r : _f;
+            if (_axl.stick && _axl.grounded) {
+                var _alvo = (p.vx / _axl.radius) * _g;
+                if (_alvo > p.w_idle) {
+                    p.omega = _alvo;
+                    _axl.omega = p.vx / _axl.radius;
+                }
+            }
+        }
         if (!p.bar_on && p.theta > 1.0472) {
             p.theta = 1.0472;
             p.wp = 0;
@@ -596,7 +615,10 @@ global.phys_v28_frame = function() {
         p.vx = max(0, global.phys_kmh_used) / 3.6;
         if (p.rear.stick) p.rear.omega = p.vx / p.rear.radius;
         if (p.front.stick) p.front.omega = p.vx / p.front.radius;
-        if (global.rpm > 500) p.omega = global.rpm * 0.104719755;
+        if (global.rpm > 500) {
+            var _wgame = global.rpm * 0.104719755;
+            if (_wgame > p.omega) p.omega = _wgame;
+        }
         p.held = 0;
     }
 
@@ -683,4 +705,90 @@ global.phys_v28_frame = function() {
     global.phys_moved = 0;
     global.phys_hit = 0;
     p.held = 0;
+};
+
+// NPC: o mesmo integrador do jogador, com o estado guardado na instancia.
+// Nao mexe no global.phys do player e nao roda o carburador/distribuidor dele.
+global.phys_v28_ai = function() {
+    if (!variable_global_exists("phys_v28_on") || !global.phys_v28_on) return 0;
+    if (!variable_instance_exists(id, "gear_ratios") || !is_array(gear_ratios)) return 0;
+    if (!variable_instance_exists(id, "kmh") || !is_real(kmh)) return 0;
+    var _bak_p = global.phys;
+    var _bak_tq = variable_global_exists("torque") ? global.torque : 0;
+    var _had_mt = variable_global_exists("maxtorque");
+    var _bak_mt = _had_mt ? global.maxtorque : 0;
+    global.phys_ai_run = 1;
+    var _mass = weight;
+    if (!is_real(_mass) || _mass <= 0) _mass = 1400;
+    var _tr = 2;
+    if (variable_instance_exists(id, "drive") && is_real(drive)) _tr = drive;
+    var _pn = 0;
+    if (variable_instance_exists(id, "pneu") && is_real(pneu)) _pn = pneu;
+    if (!variable_instance_exists(id, "ai_phys") || is_undefined(ai_phys)) {
+        global.phys_ai_spec = { mass: _mass, tr: _tr, pneu: _pn };
+        global.phys_v28_reset();
+        ai_phys = global.phys;
+        global.phys_ai_spec = undefined;
+    }
+    global.phys = ai_phys;
+    var p = global.phys;
+    var _rr = p.rear.radius;
+    var _ngear = array_length(gear_ratios);
+    var _rats = array_create(_ngear);
+    for (var _i = 0; _i < _ngear; _i++) _rats[_i] = gear_ratios[_i] * _rr * 6.28318530718;
+    p.ratios = _rats;
+    var _redrpm = 6500;
+    if (variable_instance_exists(id, "max_rpm") && max_rpm > 1000) _redrpm = max_rpm;
+    p.red = _redrpm * 0.104719755;
+    var _cap = 800;
+    if (variable_instance_exists(id, "maxtorque") && maxtorque > 100) _cap = maxtorque * 1.15;
+    p.cap = _cap;
+    p.cda = 1.30;
+    p.cla = 0;
+    var _vk = max(0, kmh) / 3.6;
+    if (abs(_vk - p.vx) > 0.8) {
+        p.vx = _vk;
+        if (p.rear.stick) p.rear.omega = p.vx / p.rear.radius;
+        if (p.front.stick) p.front.omega = p.vx / p.front.radius;
+    }
+    var _eng = 0;
+    if (variable_instance_exists(id, "engine") && engine == 1) _eng = 1;
+    p.thr_in = _eng;
+    p.pedal = (variable_instance_exists(id, "clutch") && clutch > 0) ? 1 : 0;
+    p.brake = 0;
+    p.hb = 0;
+    p.lock = 0;
+    p.ign = _eng;
+    if (!variable_struct_exists(p, "engine_was")) p.engine_was = 0;
+    if (_eng == 1 && p.engine_was == 0) {
+        p.stalled = 0;
+        if (p.omega < p.w_idle) p.omega = p.w_idle;
+    }
+    p.engine_was = _eng;
+    if (_eng == 0) p.stalled = 1;
+    var _gear = 0;
+    if (variable_instance_exists(id, "gear") && is_real(gear)) _gear = gear;
+    p.gear = _gear;
+    p.gear_target = _gear;
+    p.phase = "none";
+    p.shift_req = 0;
+    global.torque = 0;
+    if (variable_instance_exists(id, "torque") && is_real(torque)) global.torque = torque;
+    if (variable_instance_exists(id, "maxtorque") && is_real(maxtorque)) global.maxtorque = maxtorque;
+    var _dt = global.dt / 60;
+    if (_dt <= 0) _dt = 1 / 60;
+    if (_dt > 0.05) _dt = 0.05;
+    var _h = _dt / 4;
+    for (var _s = 0; _s < 4; _s++) global.phys_v28_sub(_h);
+    if (p.vx < 0) p.vx = 0;
+    if (p.vx > 150) p.vx = 150;
+    kmh = p.vx * 3.6;
+    rpm = p.omega * 9.5492965855;
+    if (rpm < 0) rpm = 0;
+    global.phys = _bak_p;
+    global.torque = _bak_tq;
+    if (_had_mt) global.maxtorque = _bak_mt;
+    global.phys_ai_run = 0;
+    global.phys_ai_spec = undefined;
+    return 1;
 };

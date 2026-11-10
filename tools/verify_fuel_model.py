@@ -6,7 +6,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "mod"))
 
-from fuel_model import Fuel, eff_afr, eff_timing, fuel_steady, fuel_step, knock_threshold  # noqa: E402
+from fuel_model import (  # noqa: E402
+    Fuel, eff_afr, eff_timing, fuel_steady, fuel_step, knock_threshold,
+    lookup, preset_curve, spring_kit_curve,
+)
 from phys_v28 import rpm_to_w, step, street_500, w_to_rpm  # noqa: E402
 
 DT = 1.0 / 60.0
@@ -115,6 +118,105 @@ def quarter(fuel):
     return t60, tq, trap
 
 
+def test_accel_pump():
+    print("bomba de aceleracao")
+    quiet = Fuel()
+    fuel_steady(quiet, 3000, 1.0)
+    a0 = quiet.afr
+    fuel_step(quiet, 3000, 1.0, 0.05)
+    check("sem tip-in a bomba fica parada", quiet.accel_timer == 0.0 and abs(quiet.afr - a0) < 0.05,
+          f"afr={quiet.afr:.2f} t={quiet.accel_timer:.2f}")
+
+    tip = Fuel()
+    fuel_steady(tip, 3000, 0.0)
+    fuel_step(tip, 3000, 1.0, 0.05)
+    wot = Fuel()
+    fuel_steady(wot, 3000, 1.0)
+    drop = wot.afr - tip.afr
+    check("tip-in derruba o AFR ~1.5 a 2.5", 1.5 <= drop <= 2.5, f"{drop:.2f} ({tip.afr:.2f} vs {wot.afr:.2f})")
+    check("bomba fica ativa", tip.accel_timer > 0.0, f"{tip.accel_timer:.2f}")
+    for _ in range(int(0.6 / 0.05)):
+        fuel_step(tip, 3000, 1.0, 0.05)
+    check("AFR volta depois da bomba", abs(tip.afr - wot.afr) < 0.15 and tip.accel_timer == 0.0,
+          f"{tip.afr:.2f} vs {wot.afr:.2f}")
+
+
+def test_choke():
+    print("afogador")
+    st = Fuel(coolant=20.0, engine_on=False)
+    fuel_step(st, 800, 0.0, 0.05)
+    check("frio liga o afogador", st.choke_active, f"afr={st.afr:.2f}")
+    check("AFR de partida ~11", 10.5 <= st.afr <= 11.5, f"{st.afr:.2f}")
+    check("lenta sobe para 1100", st.idle_target == 1100, f"{st.idle_target:.0f}")
+    st.coolant = 70.0
+    st.engine_on = True
+    for _ in range(int(20.0 / 0.05)):
+        fuel_step(st, 1200, 0.2, 0.05)
+    check("quente e depois do tempo minimo desliga", not st.choke_active, f"t={st.choke_timer:.1f} afr={st.afr:.2f}")
+
+
+def test_knock_damage():
+    print("dano de knock")
+    st = Fuel(base_timing=36.0, vacuum_on=False)
+    fuel_steady(st, 4000, 1.0)
+    for _ in range(int(2.5 / 0.05)):
+        fuel_step(st, 4000, 1.0, 0.05)
+    check("2 s de knock sobem o dano", st.knock_damage > 0.03, f"{st.knock_damage:.3f} k={st.knock:.2f}")
+    base = Fuel()
+    fuel_steady(base, 4000, 1.0)
+    e0 = base.eff
+    base.knock_damage = 1.0
+    fuel_step(base, 4000, 1.0, 0.0)
+    check("dano total tira torque", base.eff < e0 * 0.75, f"{e0:.3f} -> {base.eff:.3f}")
+    hurt = st.knock_damage
+    st.base_timing = 8.0
+    st.knock_clean = 61.0
+    for _ in range(int(8.0 / 0.05)):
+        fuel_step(st, 2000, 0.25, 0.05)
+    check("depois do cooldown o dano cai", st.knock <= 0.0 and st.knock_damage < hurt - 0.004,
+          f"{hurt:.3f} -> {st.knock_damage:.3f} k={st.knock:.2f}")
+
+
+def test_iat():
+    print("IAT dinamico")
+    st = Fuel(coolant=100.0, iat=40.0, iat_ambient=40.0, vx=0.0)
+    for _ in range(int(10.0 / 0.05)):
+        fuel_step(st, 4000, 1.0, 0.05)
+    rise = st.iat - 40.0
+    check("parado e quente o cofre sobe 20–30 C em 10 s", 20.0 <= rise <= 30.0, f"{rise:.1f}")
+    st.vx = 30.0
+    for _ in range(int(40.0 / 0.05)):
+        fuel_step(st, 2000, 0.0, 0.05)
+    check("em velocidade o ar volta perto do ambiente", st.iat < 48.0, f"{st.iat:.1f}")
+
+
+def test_curve_editor():
+    print("curva de avanco")
+    street = preset_curve("street")
+    manual = Fuel(base_timing=0.0, vacuum_on=False, cent_scale=1.0, advance=0.0, manual_retard=0.0)
+    manual.mech_curve = street
+    fuel_steady(manual, 3000, 0.3)
+    auto = Fuel(base_timing=0.0, vacuum_on=False, cent_scale=1.0, spring="street")
+    fuel_steady(auto, 3000, 0.3)
+    check("preset street reproduz a mola street", abs(manual.timing - auto.timing) < 0.05,
+          f"{manual.timing:.2f} vs {auto.timing:.2f}")
+    pts = [(800, 0), (1200, 5), (2000, 10), (3000, 20), (4000, 20), (5000, 20), (6000, 20), (7000, 20)]
+    edited = Fuel(base_timing=0.0, vacuum_on=False, cent_scale=1.0)
+    edited.mech_curve = pts
+    fuel_steady(edited, 3000, 0.3)
+    t0 = edited.timing
+    edited.mech_curve = [(800, 0), (1200, 5), (2000, 10), (3000, 25), (4000, 20), (5000, 20), (6000, 20), (7000, 20)]
+    fuel_steady(edited, 3000, 0.3)
+    check("ponto em 3000 rpm sobe o ponto 5 graus", abs((edited.timing - t0) - 5.0) < 0.05,
+          f"{t0:.2f} -> {edited.timing:.2f}")
+    light = spring_kit_curve(800, 1500, 4000, 5000)
+    check("mola leve comeca em 800", light[0][0] == 800 and lookup(light, 900) > lookup(light, 800),
+          f"{lookup(light, 800):.2f} -> {lookup(light, 900):.2f}")
+    heavy = spring_kit_curve(2000, 2500, 3500, 5000)
+    check("mola pesada so satura em 5000", lookup(heavy, 5000) > lookup(heavy, 3500) + 5.0,
+          f"3500={lookup(heavy, 3500):.1f} 5000={lookup(heavy, 5000):.1f}")
+
+
 def test_quarter():
     print("1/4 de milha com o modelo ligado")
     t60, tq, trap = quarter(Fuel())
@@ -134,6 +236,11 @@ def main():
     test_points()
     test_power_valve()
     test_knock_retard()
+    test_accel_pump()
+    test_choke()
+    test_knock_damage()
+    test_iat()
+    test_curve_editor()
     test_quarter()
     print()
     if fails:

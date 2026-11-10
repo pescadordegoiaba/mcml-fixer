@@ -637,6 +637,8 @@ global.mod_dist_tipo = function(car) {
     if (!variable_struct_exists(car, ""carburador"")) return -1;
     var _c = car.carburador;
     if (is_undefined(_c)) return -1;
+    // Noguiintech troca o carburador por injecao: distribuidor e gicle ficam fora
+    if (variable_struct_exists(car, ""noguiintech"") && is_real(car.noguiintech) && car.noguiintech != 0) return 0;
     // bicos instalados = injetado, nao importa o que diga o carburador
     if (variable_struct_exists(car, ""bicos"") && car.bicos > 0) return 0;
     if (_c > 0) return 1;
@@ -704,6 +706,15 @@ global.mod_dist_cfg = function() {
     }
     if (!variable_struct_exists(car.dist_cfg, ""avanco_extra"")) car.dist_cfg.avanco_extra = 0;
     if (!variable_struct_exists(car.dist_cfg, ""retardo"")) car.dist_cfg.retardo = 0;
+    if (!variable_struct_exists(car.dist_cfg, ""mech_custom"")) {
+        car.dist_cfg.mech_custom = 0;
+        car.dist_cfg.mech_rpm = [800, 1200, 1600, 2000, 2600, 3400, 4500, 6500];
+        car.dist_cfg.mech_deg = [0, 6, 12, 17, 21, 24, 24, 24];
+        car.dist_cfg.spring_l0 = 800;
+        car.dist_cfg.spring_l1 = 1600;
+        car.dist_cfg.spring_h0 = 2600;
+        car.dist_cfg.spring_h1 = 4500;
+    }
     return car.dist_cfg;
 };
 
@@ -945,7 +956,16 @@ global.mod_dist_dano = function() {
 global.mod_dist_input = function() {
     var e = global.mod_dist_estado;
     var car = global.mod_dist_car();
-    if (keyboard_check_pressed(vk_f6)) { e.menu = (e.menu == 0) ? 1 : 0; e.sel = 0; e.aviso = """"; }
+    if (keyboard_check_pressed(vk_f6)) {
+        if (!is_undefined(car) && global.mod_dist_tipo(car) != 1) {
+            e.menu = 0;
+            e.aviso = ""Noguiintech: motor injetado"";
+            return;
+        }
+        e.menu = (e.menu == 0) ? 1 : 0;
+        e.sel = 0;
+        e.aviso = """";
+    }
     if (e.menu == 0) return;
     if (is_undefined(car)) return;
     if (keyboard_check_pressed(vk_tab)) {
@@ -963,8 +983,9 @@ global.mod_dist_input = function() {
     if (e.menu == 3) {
         var _cc = global.mod_carb_cfg();
         if (!is_undefined(_cc) && global.mod_dist_tipo(car) == 1) {
-            if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod 3;
-            if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + 2) mod 3;
+            var _cn = (variable_global_exists(""fuel_model_on"") && global.fuel_model_on) ? 5 : 3;
+            if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod _cn;
+            if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + _cn - 1) mod _cn;
             var _d3 = 0;
             if (keyboard_check_pressed(vk_right)) _d3 = 1;
             if (keyboard_check_pressed(vk_left)) _d3 = -1;
@@ -973,10 +994,14 @@ global.mod_dist_input = function() {
                     if (!variable_struct_exists(_cc, ""jet"")) _cc.jet = 80;
                     if (!variable_struct_exists(_cc, ""idle_turns"")) _cc.idle_turns = 2.5;
                     if (!variable_struct_exists(_cc, ""pv"")) _cc.pv = 6.5;
+                    if (!variable_struct_exists(_cc, ""pump_enrich"")) _cc.pump_enrich = 2;
+                    if (!variable_struct_exists(_cc, ""pump_dur"")) _cc.pump_dur = 0.35;
                     switch (e.sel) {
                         case 0: _cc.jet = clamp(_cc.jet + (_d3 * 0.25), 60, 100); break;
                         case 1: _cc.idle_turns = clamp(_cc.idle_turns + (_d3 * 0.0625), 1, 4); break;
                         case 2: _cc.pv = clamp(_cc.pv + (_d3 * 0.125), 3.5, 10.5); break;
+                        case 3: _cc.pump_enrich = clamp(_cc.pump_enrich + (_d3 * 0.25), 1, 3); break;
+                        case 4: _cc.pump_dur = clamp(_cc.pump_dur + (_d3 * 0.05), 0.2, 0.5); break;
                     }
                 } else {
                     switch (e.sel) {
@@ -995,6 +1020,8 @@ global.mod_dist_input = function() {
                 _cc.jet = 80;
                 _cc.idle_turns = 2.5;
                 _cc.pv = 6.5;
+                _cc.pump_enrich = 2;
+                _cc.pump_dur = 0.35;
                 e.aviso = ""carburador no padrao"";
             }
         }
@@ -1002,6 +1029,38 @@ global.mod_dist_input = function() {
     }
     if (keyboard_check_pressed(ord(""3""))) global.mod_dist_remover();
     if (keyboard_check_pressed(vk_f7)) { global.mod_dist_padrao_modelo(); e.aviso = ""padrao do modelo""; }
+    if (!variable_struct_exists(e, ""curve_edit"")) e.curve_edit = 0;
+    if (keyboard_check_pressed(vk_f8)) {
+        e.curve_edit = e.curve_edit ? 0 : 1;
+        e.sel = 0;
+        return;
+    }
+    if (e.curve_edit) {
+        var _cd = global.mod_dist_cfg();
+        if (!variable_struct_exists(_cd, ""mech_deg"")) return;
+        if (keyboard_check_pressed(ord(""1""))) { global.mod_fuel_preset(""street""); e.aviso = ""curva street""; }
+        if (keyboard_check_pressed(ord(""2""))) { global.mod_fuel_preset(""strip""); e.aviso = ""curva strip""; }
+        if (keyboard_check_pressed(ord(""3""))) { global.mod_fuel_preset(""race""); e.aviso = ""curva race""; }
+        if (keyboard_check_pressed(ord(""0""))) { _cd.mech_custom = 0; e.aviso = ""curva automatica""; }
+        var _nc = 12;
+        if (keyboard_check_pressed(vk_down)) e.sel = (e.sel + 1) mod _nc;
+        if (keyboard_check_pressed(vk_up)) e.sel = (e.sel + _nc - 1) mod _nc;
+        var _dc = 0;
+        if (keyboard_check_pressed(vk_right)) _dc = 1;
+        if (keyboard_check_pressed(vk_left)) _dc = -1;
+        if (_dc != 0) {
+            if (e.sel < 8) {
+                _cd.mech_deg[e.sel] = clamp(_cd.mech_deg[e.sel] + (_dc * 0.5), 0, 30);
+                _cd.mech_custom = 1;
+            } else if (e.sel == 8) _cd.spring_l0 = clamp(_cd.spring_l0 + (_dc * 50), 800, 1500);
+            else if (e.sel == 9) _cd.spring_l1 = clamp(_cd.spring_l1 + (_dc * 50), 1500, 2500);
+            else if (e.sel == 10) _cd.spring_h0 = clamp(_cd.spring_h0 + (_dc * 50), 2000, 3500);
+            else _cd.spring_h1 = clamp(_cd.spring_h1 + (_dc * 50), 3000, 5000);
+            if (e.sel >= 8) global.mod_fuel_spring_kit();
+            e.aviso = """";
+        }
+        return;
+    }
     var modelo = global.mod_dist_modelo();
     if (modelo <= 0) return;
     var d = global.mod_dist_cfg();
@@ -1059,7 +1118,7 @@ global.mod_carb_ui = function() {
     var _x = 250;
     var _y = 40;
     var _w = 780;
-    var _h = 420;
+    var _h = 480;
     draw_set_alpha(0.93);
     draw_set_color(c_black);
     draw_rectangle(_x, _y, _x + _w, _y + _h, false);
@@ -1086,10 +1145,13 @@ global.mod_carb_ui = function() {
         if (!variable_struct_exists(cfg, ""jet"")) cfg.jet = 80;
         if (!variable_struct_exists(cfg, ""idle_turns"")) cfg.idle_turns = 2.5;
         if (!variable_struct_exists(cfg, ""pv"")) cfg.pv = 6.5;
-        _labels = [""Gicle principal"", ""Mistura de lenta (voltas)"", ""Power valve (inHg)""];
-        _vals = [cfg.jet, cfg.idle_turns, cfg.pv];
+        if (!variable_struct_exists(cfg, ""pump_enrich"")) cfg.pump_enrich = 2;
+        if (!variable_struct_exists(cfg, ""pump_dur"")) cfg.pump_dur = 0.35;
+        _labels = [""Gicle principal"", ""Mistura de lenta (voltas)"", ""Power valve (inHg)"", ""Bomba de aceleracao (AFR)"", ""Duracao da bomba (s)""];
+        _vals = [cfg.jet, cfg.idle_turns, cfg.pv, cfg.pump_enrich, cfg.pump_dur];
     }
-    for (var i = 0; i < 3; i++) {
+    var _nrows = array_length(_labels);
+    for (var i = 0; i < _nrows; i++) {
         var _ry = _y + 54 + (i * 30);
         if (i == e.sel) {
             draw_set_color(make_color_rgb(50, 70, 60));
@@ -1109,14 +1171,20 @@ global.mod_carb_ui = function() {
     if (variable_global_exists(""fuel_model_on"") && global.fuel_model_on) {
         _d1 = [""Tamanho do gicle principal. Maior = mais rico."",
                ""Parafuso de mistura da lenta, em voltas."",
-               ""Power valve abre no vacuo abaixo deste valor.""];
+               ""Power valve abre no vacuo abaixo deste valor."",
+               ""Bomba: enriquecimento no tip-in, em pontos de AFR."",
+               ""Quanto tempo o jato da bomba leva para sumir.""];
         _d2 = [""80 e o neutro (WOT ~13). 100 afoga. 60 empobrece."",
                ""2,5 voltas ~ 13,0 de AFR. Menos volta = mais pobre."",
-               ""No WOT o vacuo cai e a valvula enriquece ~1 ponto.""];
+               ""No WOT o vacuo cai e a valvula enriquece ~1 ponto."",
+               ""2 pontos por acelerada cheia. 1 fraco, 3 forte."",
+               ""0,35 s e o padrao. 0,20 curto, 0,50 longo.""];
     }
     draw_set_color(make_color_rgb(255, 235, 160));
-    draw_text(_x + 30, _y + 158, _d1[e.sel]);
-    draw_text(_x + 30, _y + 176, _d2[e.sel]);
+    var _help = e.sel;
+    if (_help < 0 || _help >= array_length(_d1)) _help = 0;
+    draw_text(_x + 30, _y + 220, _d1[_help]);
+    draw_text(_x + 30, _y + 238, _d2[_help]);
     var _gi = global.mod_carb_gicle_ideal(max(1, car.carburador));
     draw_set_color(make_color_rgb(200, 200, 200));
     draw_text(_x + 30, _y + 214, ""gicle principal ideal deste modelo: "" + string(_gi));
@@ -1725,7 +1793,7 @@ global.mod_dist_ui = function() {
     draw_set_color(make_color_rgb(200, 60, 60));
     draw_rectangle(_x, _y, _x + _w, _y + 34, false);
     draw_set_color(c_white);
-    draw_text(_x + 12, _y + 8, ""DISTRIBUIDOR - "" + global.mod_dist_nome[modelo]);
+    draw_text(_x + 12, _y + 8, ""DISTRIBUIDOR - "" + global.mod_dist_nome[modelo] + ""   F8 curva"");
     global.mod_dist_draw_icon(_x + 150, _y + 200, 300);
     if (modelo <= 0) {
         draw_set_color(make_color_rgb(255, 170, 120));
@@ -1735,6 +1803,28 @@ global.mod_dist_ui = function() {
     }
     var d = global.mod_dist_cfg();
     var lim = global.mod_dist_limites(modelo);
+    if (!variable_struct_exists(e, ""curve_edit"")) e.curve_edit = 0;
+    if (e.curve_edit && variable_struct_exists(d, ""mech_deg"")) {
+        draw_text(_x + 310, _y + 46, ""CURVA   1 street  2 strip  3 race  0 automatica"");
+        var _cl = [""800 rpm"", ""1200"", ""1600"", ""2000"", ""2600"", ""3400"", ""4500"", ""6500"", ""mola leve inicio"", ""mola leve fim"", ""mola pesada inicio"", ""mola pesada fim""];
+        var _cv = [d.mech_deg[0], d.mech_deg[1], d.mech_deg[2], d.mech_deg[3], d.mech_deg[4], d.mech_deg[5], d.mech_deg[6], d.mech_deg[7], d.spring_l0, d.spring_l1, d.spring_h0, d.spring_h1];
+        for (var _ci = 0; _ci < 12; _ci++) {
+            var _ryc = _y + 74 + (_ci * 28);
+            if (_ci == e.sel) {
+                draw_set_color(make_color_rgb(60, 60, 90));
+                draw_rectangle(_x + 300, _ryc - 2, _x + _w - 14, _ryc + 24, false);
+            }
+            draw_set_color(c_white);
+            var _lab = _cl[_ci];
+            if (_ci < 8 && array_length(d.mech_rpm) > _ci) _lab = string(d.mech_rpm[_ci]) + "" rpm"";
+            draw_text(_x + 310, _ryc + 4, _lab);
+            draw_set_color(make_color_rgb(255, 210, 120));
+            draw_text(_x + _w - 140, _ryc + 4, global.mod_num_txt(_cv[_ci]));
+        }
+        draw_set_color(c_white);
+        draw_text(_x + 310, _y + _h - 36, d.mech_custom ? ""curva propria ligada"" : ""curva automatica"");
+        return;
+    }
     if (!variable_struct_exists(d, ""avanco_extra"")) d.avanco_extra = 0;
     if (!variable_struct_exists(d, ""retardo"")) d.retardo = 0;
     var _labels = [""Avanco inicial (graus)"", ""Centrifugo total (graus)"", ""RPM de inicio"", ""RPM de fim"", ""Curva (0 rua, 1 mista, 2 pista)"", ""Vacuo total (graus)"", ""Limiar de vacuo (bar)"", ""Dwell (graus)"", ""Desgaste (%)"", ""Ganho (%)"", ""Avanco extra (graus)"", ""Retardo (graus)""];
@@ -2302,6 +2392,50 @@ global.mod_dist_carregar = function() {
     }
 };
 
+// fase 2: curva de 8 pontos. mech_custom 0 continua na mistura rua/mista/pista.
+global.mod_fuel_preset = function(_nome) {
+    var d = global.mod_dist_cfg();
+    var _rpm;
+    var _deg;
+    if (_nome == ""strip"") {
+        _rpm = [800, 1400, 2000, 2600, 3200, 4000, 5000, 6500];
+        _deg = [0, 3, 9, 15, 19, 22, 24, 24];
+    } else if (_nome == ""race"") {
+        _rpm = [800, 1800, 2400, 3000, 3800, 4600, 5600, 7000];
+        _deg = [0, 1, 6, 12, 16, 19, 21, 22];
+    } else {
+        _rpm = [800, 1200, 1600, 2000, 2600, 3400, 4500, 6500];
+        _deg = [0, 6, 12, 17, 21, 24, 24, 24];
+    }
+    d.mech_rpm = _rpm;
+    d.mech_deg = _deg;
+    d.mech_custom = 1;
+};
+
+global.mod_fuel_smooth = function(_u) {
+    if (_u < 0) _u = 0;
+    if (_u > 1) _u = 1;
+    return _u * _u * (3 - (2 * _u));
+};
+
+global.mod_fuel_spring_kit = function() {
+    var d = global.mod_dist_cfg();
+    var _rpm = [800, 1200, 1600, 2000, 2600, 3400, 4500, 6500];
+    var _deg = array_create(8);
+    var _sl = d.spring_l1 - d.spring_l0;
+    var _sh = d.spring_h1 - d.spring_h0;
+    if (_sl < 1) _sl = 1;
+    if (_sh < 1) _sh = 1;
+    for (var _i = 0; _i < 8; _i++) {
+        var _ul = global.mod_fuel_smooth((_rpm[_i] - d.spring_l0) / _sl);
+        var _uh = global.mod_fuel_smooth((_rpm[_i] - d.spring_h0) / _sh);
+        _deg[_i] = 24 * ((0.45 * _ul) + (0.55 * _uh));
+    }
+    d.mech_rpm = _rpm;
+    d.mech_deg = _deg;
+    d.mech_custom = 1;
+};
+
 // le o ini uma vez no boot (antes so era definida, nunca chamada)
 global.mod_dist_carregar();
 ");
@@ -2402,6 +2536,10 @@ g.QueueFindReplace("gml_Object_obj_ia_car_Step_0",
     "var _base_acceleration = (torque * hp) / (weight * 750);",
     "var _base_acceleration = global.phys_base(torque, gear_ratios[max(0, gear - 1)], 0.31, weight * 1000, global.phys_k(hp, 0.31, gear_ratios[0]), 0.90, global.phys_mu(pneu, temp), 1.0);",
     false);
+g.QueueFindReplace("gml_Object_obj_ia_car_Step_0", "    _target_speed = min(kmh + _acceleration, _gearlimit);\n    if (kmh < _gearlimit && clutch <= 0)\n    {\n        kmh = lerp(kmh, _target_speed, dt_lerp_factor(0.05));\n    }", "    _target_speed = min(kmh + _acceleration, _gearlimit);\n    if (!global.phys_v28_ai()) {\n    if (kmh < _gearlimit && clutch <= 0)\n    {\n        kmh = lerp(kmh, _target_speed, dt_lerp_factor(0.05));\n    }\n    }", false);
+g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Step_0", "    _target_speed = min(kmh + _acceleration, _gearlimit);\n    if (kmh < _gearlimit && clutch <= 0)\n    {\n        kmh = lerp(kmh, _target_speed, dt_lerp_factor(0.05));\n    }", "    _target_speed = min(kmh + _acceleration, _gearlimit);\n    if (!global.phys_v28_ai()) {\n    if (kmh < _gearlimit && clutch <= 0)\n    {\n        kmh = lerp(kmh, _target_speed, dt_lerp_factor(0.05));\n    }\n    }", false);
+g.QueueFindReplace("gml_Object_obj_ia_opponent_Step_0", "    _target_speed = min(kmh + _acceleration, _gearlimit);\n    if (kmh < _gearlimit)\n    {\n        if (clutch <= 0)\n        {\n            kmh = lerp(kmh, _target_speed, 0.05);\n        }\n    }", "    _target_speed = min(kmh + _acceleration, _gearlimit);\n    if (!global.phys_v28_ai()) {\n    if (kmh < _gearlimit)\n    {\n        if (clutch <= 0)\n        {\n            kmh = lerp(kmh, _target_speed, 0.05);\n        }\n    }\n    }", false);
+g.QueueFindReplace("gml_Object_obj_ia_car_NPC_Step_0", "    _target_speed = min(kmh + (_acceleration * global.dt), _gearlimit);\n    if (kmh < _gearlimit)\n    {\n        if (clutch <= 0)\n        {\n            kmh = lerp(kmh, _target_speed, dt_lerp_factor(0.05));\n        }\n    }", "    _target_speed = min(kmh + (_acceleration * global.dt), _gearlimit);\n    if (!global.phys_v28_ai()) {\n    if (kmh < _gearlimit)\n    {\n        if (clutch <= 0)\n        {\n            kmh = lerp(kmh, _target_speed, dt_lerp_factor(0.05));\n        }\n    }\n    }", false);
 g.QueueFindReplace("gml_Object_obj_ia_car_TOUGE_Step_0",
     "var _base_acceleration = (torque * hp) / (weight * 750);",
     "var _base_acceleration = global.phys_base(torque, gear_ratios[max(0, gear - 1)], 0.31, weight * 1000, global.phys_k(hp, 0.31, gear_ratios[0]), 0.90, global.phys_mu(pneu, temp), 1.0);",
@@ -2714,7 +2852,12 @@ global.fuel_sys_ensure = function() {
         octane: 93, iat: 40, coolant: 90,
         mapb: 0.35, afr: 13, timing: 10, knock: 0, retard: 0,
         load: 0, mech: 0, vac: 0, mbt: 28, eff: 1,
-        prev_thr: 0, injected: 0
+        prev_thr: 0, injected: 0,
+        mech_custom: 0,
+        pump_dur: 0.35, pump_enrich: 2.0, accel_timer: 0, accel_shot: 0, accel_delta: 0,
+        choke_on: 0, choke_timer: 0, idle_target: 800, thr_floor: 0,
+        knock_damage: 0, knock_clean: 0, fail_timer: -1, engine_failure_pending: 0,
+        iat_amb: 40, vx: 0, car_id: -1
     };
     global.telemetry_afr = 13;
     global.telemetry_timing = 10;
@@ -2726,7 +2869,23 @@ global.fuel_sys_ensure = function() {
 global.fuel_sys_sync = function() {
     global.fuel_sys_ensure();
     var _car = global.mod_dist_car();
-    if (!is_undefined(_car) && variable_struct_exists(_car, ""dist_cfg"") && !is_undefined(_car.dist_cfg)) {
+    var _inj = 0;
+    if (!is_undefined(_car) && global.mod_dist_tipo(_car) != 1) _inj = 1;
+    global.fuel_sys.injected = _inj;
+    if (_inj) {
+        // injecao (Noguiintech ou bicos): o ponto e o da ECU, nao do distribuidor
+        var _ign = 15;
+        if (variable_global_exists(""ignicao"") && is_real(global.ignicao) && global.ignicao > 0) _ign = global.ignicao;
+        global.fuel_sys.base = global.fuel_sys_clamp(_ign, 0, 55);
+        global.fuel_sys.advance = 0;
+        global.fuel_sys.man_ret = 0;
+        global.fuel_sys.curva = 0;
+        global.fuel_sys.cent_scale = 0;
+        global.fuel_sys.vac_on = 0;
+        global.fuel_sys.max_vac = 0;
+        global.fuel_sys.rpm_ini = 1000;
+        global.fuel_sys.rpm_fim = 3200;
+    } else if (!is_undefined(_car) && variable_struct_exists(_car, ""dist_cfg"") && !is_undefined(_car.dist_cfg)) {
         var _d = _car.dist_cfg;
         if (!variable_struct_exists(_d, ""avanco_extra"")) _d.avanco_extra = 0;
         if (!variable_struct_exists(_d, ""retardo"")) _d.retardo = 0;
@@ -2749,11 +2908,45 @@ global.fuel_sys_sync = function() {
         global.fuel_sys.jet = global.fuel_sys_clamp(_c.jet, 60, 100);
         global.fuel_sys.turns = global.fuel_sys_clamp(_c.idle_turns, 1, 4);
         global.fuel_sys.pv = global.fuel_sys_clamp(_c.pv, 3.5, 10.5);
+        if (!variable_struct_exists(_c, ""pump_enrich"")) _c.pump_enrich = 2;
+        if (!variable_struct_exists(_c, ""pump_dur"")) _c.pump_dur = 0.35;
+        global.fuel_sys.pump_enrich = global.fuel_sys_clamp(_c.pump_enrich, 1, 3);
+        global.fuel_sys.pump_dur = global.fuel_sys_clamp(_c.pump_dur, 0.2, 0.5);
     }
-    global.fuel_sys.injected = 0;
-    if (!is_undefined(_car) && global.mod_dist_tipo(_car) != 1) global.fuel_sys.injected = 1;
-    if (variable_global_exists(""iat"")) global.fuel_sys.iat = global.iat;
-    if (variable_global_exists(""temp"") && global.temp > 40) global.fuel_sys.coolant = global.temp;
+    if (!is_undefined(_car) && variable_struct_exists(_car, ""dist_cfg"") && !is_undefined(_car.dist_cfg)) {
+        var _dc = _car.dist_cfg;
+        global.fuel_sys.mech_custom = (variable_struct_exists(_dc, ""mech_custom"") && _dc.mech_custom) ? 1 : 0;
+        if (global.fuel_sys.mech_custom && variable_struct_exists(_dc, ""mech_rpm"") && variable_struct_exists(_dc, ""mech_deg"")) {
+            global.fuel_sys.mech_rpm = _dc.mech_rpm;
+            global.fuel_sys.mech_deg = _dc.mech_deg;
+        }
+    } else {
+        global.fuel_sys.mech_custom = 0;
+    }
+    // iat da pista e o ambiente. o valor dinamico fica no fuel_sys, nao e
+    // reescrito todo passo (senao o cofre nao esquenta).
+    var _amb = 40;
+    if (variable_global_exists(""iat"") && is_real(global.iat)) _amb = global.iat;
+    if (global.fuel_sys.car_id != global.vehicles_array) {
+        global.fuel_sys.car_id = global.vehicles_array;
+        global.fuel_sys.iat_amb = _amb;
+        global.fuel_sys.iat = _amb;
+        global.fuel_sys.accel_timer = 0;
+        global.fuel_sys.choke_on = 0;
+        global.fuel_sys.choke_timer = 0;
+        global.fuel_sys.knock_damage = 0;
+        global.fuel_sys.knock_clean = 0;
+        global.fuel_sys.fail_timer = -1;
+        global.fuel_sys.engine_failure_pending = 0;
+        if (!is_undefined(_car) && variable_struct_exists(_car, ""fuel_phase2"") && !is_undefined(_car.fuel_phase2)) {
+            var _p2 = _car.fuel_phase2;
+            if (variable_struct_exists(_p2, ""knock_damage"")) global.fuel_sys.knock_damage = _p2.knock_damage;
+            if (variable_struct_exists(_p2, ""iat"")) global.fuel_sys.iat = _p2.iat;
+        }
+    }
+    if (variable_global_exists(""temp"") && is_real(global.temp)) global.fuel_sys.coolant = global.temp;
+    if (variable_global_exists(""phys"") && !is_undefined(global.phys) && variable_struct_exists(global.phys, ""vx"")) global.fuel_sys.vx = global.phys.vx;
+    else if (variable_global_exists(""kmh"") && is_real(global.kmh)) global.fuel_sys.vx = global.kmh / 3.6;
 };
 
 global.fuel_sys_mech_tab = function(_rpm, _kind) {
@@ -2774,6 +2967,9 @@ global.fuel_sys_mech_tab = function(_rpm, _kind) {
 
 global.fuel_sys_mech = function(_rpm) {
     var f = global.fuel_sys;
+    if (f.mech_custom && is_array(f.mech_rpm) && is_array(f.mech_deg) && array_length(f.mech_rpm) >= 2) {
+        return global.fuel_sys_lookup(_rpm, f.mech_rpm, f.mech_deg) * f.cent_scale;
+    }
     var _span = f.rpm_fim - f.rpm_ini;
     if (_span < 200) _span = 200;
     var _rpm2 = 1000 + (_rpm - f.rpm_ini) * (2200 / _span);
@@ -2831,6 +3027,13 @@ global.fuel_sys_step = function(_rpm, _thr, _dt) {
     var f = global.fuel_sys;
     if (_dt < 0) _dt = 0;
     _thr = global.fuel_sys_clamp(_thr, 0, 1);
+    // IAT dinamico antes do knock: cofre quente e WOT esquentam o ar
+    var _cn = global.fuel_sys_clamp((f.coolant - 80) / 40, 0, 1);
+    var _spd = global.fuel_sys_clamp(f.vx / 20, 0.2, 1);
+    var _diat = (6 * _cn * _thr) - (0.08 * (f.iat - f.iat_amb) * _spd);
+    f.iat = global.fuel_sys_clamp(f.iat + (_diat * _dt), f.iat_amb, f.iat_amb + 60);
+    var _tps = 0;
+    if (_dt > 0.000001) _tps = (_thr - f.prev_thr) / _dt;
     // 3a — distribuidor ve o MAP e o AFR do passo anterior
     f.mech = global.fuel_sys_mech(_rpm);
     f.vac = 0;
@@ -2872,7 +3075,41 @@ global.fuel_sys_step = function(_rpm, _thr, _dt) {
         }
         var _inhg = max(0, (1.013 - f.mapb) / 0.0339);
         if (_inhg < f.pv && _thr > 0.5) _afr -= f.enrich;
+        // bomba de aceleracao: tip-in enriquece e o extra decai
+        if (_tps > 2 && _thr > 0.1) {
+            f.accel_timer = f.pump_dur;
+            f.accel_shot = -f.pump_enrich * max(0, _thr - f.prev_thr);
+        }
+        var _ad = 0;
+        if (f.accel_timer > 0 && f.pump_dur > 0) {
+            _ad = f.accel_shot * (f.accel_timer / f.pump_dur);
+            f.accel_timer = max(0, f.accel_timer - _dt);
+        }
+        f.accel_delta = _ad;
+        _afr += _ad;
+        // afogador: frio e motor parado ou lenta baixa
+        var _engon = (variable_global_exists(""engine"") && global.engine == 1) ? 1 : 0;
+        var _cold = (f.coolant < 40) && ((_engon == 0) || (_rpm < 720));
+        if (!f.choke_on && _cold) f.choke_on = 1;
+        if (f.choke_on) {
+            f.choke_timer += _dt;
+            if (f.coolant > 60 && f.choke_timer > 15) f.choke_on = 0;
+        }
+        if (f.choke_on) {
+            _afr -= 2;
+            f.idle_target = 1100;
+            f.thr_floor = 0.12;
+        } else {
+            f.idle_target = 800;
+            f.thr_floor = 0;
+        }
         f.afr = _afr;
+    }
+    if (f.injected) {
+        f.accel_delta = 0;
+        f.choke_on = 0;
+        f.idle_target = 800;
+        f.thr_floor = 0;
     }
     f.mbt = global.fuel_sys_mbt(_rpm, f.mapb);
     var _dtm = (f.timing - f.mbt) / 10;
@@ -2880,7 +3117,31 @@ global.fuel_sys_step = function(_rpm, _thr, _dt) {
     var _da = (f.afr - 12.8) / 2;
     var _ea = max(0.30, 1 - 0.10 * _da * _da);
     f.eff = max(0.25, _et * _ea * (1 - 0.4 * f.knock));
+    f.eff = max(0.05, f.eff * (1 - f.knock_damage * 0.3));
+    if (f.knock > 0.7) {
+        f.knock_damage = min(1, f.knock_damage + (0.02 * f.knock * _dt));
+        f.knock_clean = 0;
+    } else if (f.knock <= 0) {
+        f.knock_clean += _dt;
+        if (f.knock_clean > 60) f.knock_damage = max(0, f.knock_damage - (0.001 * _dt));
+    }
+    if (f.knock_damage > 0.9) {
+        if (f.fail_timer < 0) f.fail_timer = 30;
+        else {
+            f.fail_timer -= _dt;
+            if (f.fail_timer <= 0) f.engine_failure_pending = 1;
+        }
+    } else if (!f.engine_failure_pending) {
+        f.fail_timer = -1;
+    }
+    if (f.engine_failure_pending && variable_global_exists(""engine"")) global.engine = 0;
     f.prev_thr = _thr;
+    var _car2 = global.mod_dist_car();
+    if (!is_undefined(_car2)) {
+        if (!variable_struct_exists(_car2, ""fuel_phase2"") || is_undefined(_car2.fuel_phase2)) _car2.fuel_phase2 = {};
+        _car2.fuel_phase2.knock_damage = f.knock_damage;
+        _car2.fuel_phase2.iat = f.iat;
+    }
 
     global.afr = f.afr;
     global.ignicao = f.timing;
@@ -2889,6 +3150,13 @@ global.fuel_sys_step = function(_rpm, _thr, _dt) {
     global.telemetry_knock = f.knock;
     global.telemetry_MAP = f.mapb;
     global.telemetry_octane_effective = f.octane - max(0, f.iat - 40) * 0.5 - max(0, f.coolant - 100) * 0.25;
+    global.telemetry_accel_pump = (f.accel_timer > 0) ? 1 : 0;
+    global.telemetry_accel_afr_delta = f.accel_delta;
+    global.telemetry_choke_active = f.choke_on;
+    global.telemetry_knock_damage = f.knock_damage;
+    global.telemetry_iat = f.iat;
+    global.telemetry_idle_target = f.idle_target;
+    global.telemetry_engine_failure = f.engine_failure_pending;
     if (variable_global_exists(""mod_dist_estado"")) {
         global.mod_dist_estado.knock = f.knock;
         global.mod_dist_estado.avanco = f.timing;
@@ -2965,11 +3233,19 @@ global.phys_v28_axle = function(_name, _driven, _radius, _mu, _mu_s, _peak, _mu_
 
 global.phys_v28_reset = function() {
     var _m = global.weight;
+    var _tr = 2;
+    var _pneu_ai = -1;
+    var _car_id = global.vehicles_array;
+    if (variable_global_exists(""phys_ai_spec"") && !is_undefined(global.phys_ai_spec)) {
+        _m = global.phys_ai_spec.mass;
+        _tr = global.phys_ai_spec.tr;
+        _pneu_ai = global.phys_ai_spec.pneu;
+        _car_id = -1000;
+    }
     if (is_undefined(_m) || _m <= 0) _m = 1.4;
     if (_m < 50) _m *= 1000;
     if (_m < 400) _m = 1400;
-    var _tr = 2;
-    if (variable_global_exists(""car_data"") && variable_global_exists(""vehicles_array"")) {
+    if (_pneu_ai < 0 && variable_global_exists(""car_data"") && variable_global_exists(""vehicles_array"")) {
         _tr = global.car_data[global.vehicles_array].tracao;
     }
     var _uf = 70;
@@ -2989,7 +3265,8 @@ global.phys_v28_reset = function() {
     var _cf = 0.4 * 2 * sqrt(_kf * _ms * _b / _L);
     var _cr = 0.4 * 2 * sqrt(_kr * _ms * _a / _L);
     var _pneu = 0;
-    if (variable_global_exists(""car_data"")) _pneu = global.car_data[global.vehicles_array].pneu;
+    if (_pneu_ai >= 0) _pneu = _pneu_ai;
+    else if (variable_global_exists(""car_data"")) _pneu = global.car_data[global.vehicles_array].pneu;
     var _mu_f = 0.95;
     var _ms_f = 1.15;
     var _mu_r = 0.95;
@@ -3005,7 +3282,7 @@ global.phys_v28_reset = function() {
     _rear.psi = _pk_r;
     var _hbar = _h - 0.05;
     global.phys = {
-        held: 1, car: global.vehicles_array, mass: _m, sprung: _ms,
+        held: 1, car: _car_id, mass: _m, sprung: _ms,
         ix: _ms * (_L * _L + 0.25) / 12, h: _h, a: _a, b: _b, L: _L,
         has: 0, seng: (_tr == 1) ? -1 : 0, haero: _h, xcp: _a,
         cda: 1.0, cla: 0,
@@ -3141,9 +3418,17 @@ global.phys_v28_sub = function(_dt) {
     var _tcomb = 0;
     if (!p.stalled) {
         _tcomb = global.torque * _thr;
-        if (variable_global_exists(""fuel_model_on"") && global.fuel_model_on) {
+        if (variable_global_exists(""fuel_model_on"") && global.fuel_model_on && !(variable_global_exists(""phys_ai_run"") && global.phys_ai_run)) {
             global.fuel_sys_step(p.omega * 9.5492965855, _thr, _dt);
             _tcomb = global.torque * _thr * global.fuel_sys.eff;
+            if (global.fuel_sys.engine_failure_pending) {
+                p.stalled = 1;
+                _tcomb = 0;
+            } else if (global.fuel_sys.choke_on) {
+                p.w_idle = 115.2;
+            } else {
+                p.w_idle = 83.8;
+            }
         }
         if (is_undefined(_tcomb)) _tcomb = 0;
         if (p.omega > p.red) {
@@ -3179,9 +3464,10 @@ global.phys_v28_sub = function(_dt) {
         var _wref = _r.driven ? _r.omega : _f.omega;
         var _delta = p.omega - _wref * _g;
         var _cap = p.eng * p.cap;
-        // pe fora, a embreagem segura o torque deste giro. se a capacidade
-        // ficar abaixo do motor, o giro foge para o corte com o carro ainda lento.
-        if (p.eng >= 0.9 && abs(p.teng) > _cap) _cap = abs(p.teng) * 1.2;
+        // pe fora, a embreagem fica travada na marcha. tem de cobrir o motor
+        // e a carga refletida: numa relacao longa a carga passa da capacidade,
+        // o regime vira slip com delta ~ 0 e o carro trava com o giro colado.
+        if (p.eng >= 0.9) _cap = max(_cap, abs(p.teng) * 1.2, abs(p.tload) * 1.2);
         var _slip = p.slip_next || abs(_delta) > p.eps_c || abs(p.tload) > _cap;
         p.slip_next = 0;
         if (_slip) {
@@ -3207,8 +3493,8 @@ global.phys_v28_sub = function(_dt) {
         var _coeff = _dt * (1 / _ie + (_g * _k) / _iw);
         var _rhs = _del + p.teng * _dt / _ie + _g * _ext * _dt / _iw;
         var _tsync = (_coeff > 0.0000001) ? (_rhs / _coeff) : 0;
-        if (abs(_del) < 0.000001) p.tcl = 0;
-        else if (global.phys_v28_sgn(_tsync) == global.phys_v28_sgn(_del) && abs(_tsync) <= abs(p.tcl)) p.tcl = _tsync;
+        // delta ~ 0: o torque ja foi definido pela carga. zerar apagava a forca.
+        if (abs(_del) >= 0.000001 && global.phys_v28_sgn(_tsync) == global.phys_v28_sgn(_del) && abs(_tsync) <= abs(p.tcl)) p.tcl = _tsync;
         p.omega = max(0, p.omega + ((p.teng - p.tcl) / _ie) * _dt);
         if (abs(_del) >= 0.000001 && abs(p.tcl - _tsync) < 0.000001) {
             var _ws = p.omega / _g;
@@ -3222,7 +3508,7 @@ global.phys_v28_sub = function(_dt) {
         var _ieq = _ie + _iwsum / (_g * _g);
         var _dom = (p.teng - p.tload) / _ieq;
         var _cap2 = p.eng * p.cap;
-        if (p.eng >= 0.9 && abs(p.teng) > _cap2) _cap2 = abs(p.teng) * 1.2;
+        if (p.eng >= 0.9) _cap2 = max(_cap2, abs(p.teng) * 1.2, abs(p.tload) * 1.2);
         p.tcl = p.teng - _ie * _dom;
         if (abs(p.tcl) > _cap2 + 0.000001) {
             p.slip_next = 1;
@@ -3290,18 +3576,6 @@ global.phys_v28_sub = function(_dt) {
     // 9 roda
     global.phys_v28_wheel(_f, p.twf, _dt);
     global.phys_v28_wheel(_r, p.twr, _dt);
-    // pe fora, pneu grudado e carro ja andando: corta giro que fugiu da marcha
-    if (p.eng >= 0.9 && !p.stalled && _g > 0 && abs(p.vx) >= 2.2) {
-        var _axl = _r.driven ? _r : _f;
-        if (_axl.stick && _axl.grounded) {
-            var _alvo = (p.vx / _axl.radius) * _g;
-            if (p.omega > _alvo + 41.9) {
-                if (_alvo < p.w_idle) _alvo = p.w_idle;
-                p.omega = _alvo;
-                _axl.omega = p.vx / _axl.radius;
-            }
-        }
-    }
 
     // 10-11 chassi
     var _vd = p.vx * p.vx;
@@ -3344,6 +3618,19 @@ global.phys_v28_sub = function(_dt) {
         p.theta += p.wp * _dt;
         p.vx += _axx * _dt;
         p.ax = _axx;
+        // pe fora e embreagem grudada: o giro acompanha a marcha na velocidade
+        // que este passo acabou de produzir. patinando, o motor pode subir.
+        // abaixo da lenta nao crava: a roda saia com o conta-giros em 800.
+        if (p.eng >= 0.9 && !p.stalled && p.mode == ""stick"" && _g > 0 && abs(p.vx) >= 2.2) {
+            var _axl = _r.driven ? _r : _f;
+            if (_axl.stick && _axl.grounded) {
+                var _alvo = (p.vx / _axl.radius) * _g;
+                if (_alvo > p.w_idle) {
+                    p.omega = _alvo;
+                    _axl.omega = p.vx / _axl.radius;
+                }
+            }
+        }
         if (!p.bar_on && p.theta > 1.0472) {
             p.theta = 1.0472;
             p.wp = 0;
@@ -3502,7 +3789,10 @@ global.phys_v28_frame = function() {
         p.vx = max(0, global.phys_kmh_used) / 3.6;
         if (p.rear.stick) p.rear.omega = p.vx / p.rear.radius;
         if (p.front.stick) p.front.omega = p.vx / p.front.radius;
-        if (global.rpm > 500) p.omega = global.rpm * 0.104719755;
+        if (global.rpm > 500) {
+            var _wgame = global.rpm * 0.104719755;
+            if (_wgame > p.omega) p.omega = _wgame;
+        }
         p.held = 0;
     }
 
@@ -3590,8 +3880,101 @@ global.phys_v28_frame = function() {
     global.phys_hit = 0;
     p.held = 0;
 };
+
+// NPC: o mesmo integrador do jogador, com o estado guardado na instancia.
+// Nao mexe no global.phys do player e nao roda o carburador/distribuidor dele.
+global.phys_v28_ai = function() {
+    if (!variable_global_exists(""phys_v28_on"") || !global.phys_v28_on) return 0;
+    if (!variable_instance_exists(id, ""gear_ratios"") || !is_array(gear_ratios)) return 0;
+    if (!variable_instance_exists(id, ""kmh"") || !is_real(kmh)) return 0;
+    var _bak_p = global.phys;
+    var _bak_tq = variable_global_exists(""torque"") ? global.torque : 0;
+    var _had_mt = variable_global_exists(""maxtorque"");
+    var _bak_mt = _had_mt ? global.maxtorque : 0;
+    global.phys_ai_run = 1;
+    var _mass = weight;
+    if (!is_real(_mass) || _mass <= 0) _mass = 1400;
+    var _tr = 2;
+    if (variable_instance_exists(id, ""drive"") && is_real(drive)) _tr = drive;
+    var _pn = 0;
+    if (variable_instance_exists(id, ""pneu"") && is_real(pneu)) _pn = pneu;
+    if (!variable_instance_exists(id, ""ai_phys"") || is_undefined(ai_phys)) {
+        global.phys_ai_spec = { mass: _mass, tr: _tr, pneu: _pn };
+        global.phys_v28_reset();
+        ai_phys = global.phys;
+        global.phys_ai_spec = undefined;
+    }
+    global.phys = ai_phys;
+    var p = global.phys;
+    var _rr = p.rear.radius;
+    var _ngear = array_length(gear_ratios);
+    var _rats = array_create(_ngear);
+    for (var _i = 0; _i < _ngear; _i++) _rats[_i] = gear_ratios[_i] * _rr * 6.28318530718;
+    p.ratios = _rats;
+    var _redrpm = 6500;
+    if (variable_instance_exists(id, ""max_rpm"") && max_rpm > 1000) _redrpm = max_rpm;
+    p.red = _redrpm * 0.104719755;
+    var _cap = 800;
+    if (variable_instance_exists(id, ""maxtorque"") && maxtorque > 100) _cap = maxtorque * 1.15;
+    p.cap = _cap;
+    p.cda = 1.30;
+    p.cla = 0;
+    var _vk = max(0, kmh) / 3.6;
+    if (abs(_vk - p.vx) > 0.8) {
+        p.vx = _vk;
+        if (p.rear.stick) p.rear.omega = p.vx / p.rear.radius;
+        if (p.front.stick) p.front.omega = p.vx / p.front.radius;
+    }
+    var _eng = 0;
+    if (variable_instance_exists(id, ""engine"") && engine == 1) _eng = 1;
+    p.thr_in = _eng;
+    p.pedal = (variable_instance_exists(id, ""clutch"") && clutch > 0) ? 1 : 0;
+    p.brake = 0;
+    p.hb = 0;
+    p.lock = 0;
+    p.ign = _eng;
+    if (!variable_struct_exists(p, ""engine_was"")) p.engine_was = 0;
+    if (_eng == 1 && p.engine_was == 0) {
+        p.stalled = 0;
+        if (p.omega < p.w_idle) p.omega = p.w_idle;
+    }
+    p.engine_was = _eng;
+    if (_eng == 0) p.stalled = 1;
+    var _gear = 0;
+    if (variable_instance_exists(id, ""gear"") && is_real(gear)) _gear = gear;
+    p.gear = _gear;
+    p.gear_target = _gear;
+    p.phase = ""none"";
+    p.shift_req = 0;
+    global.torque = 0;
+    if (variable_instance_exists(id, ""torque"") && is_real(torque)) global.torque = torque;
+    if (variable_instance_exists(id, ""maxtorque"") && is_real(maxtorque)) global.maxtorque = maxtorque;
+    var _dt = global.dt / 60;
+    if (_dt <= 0) _dt = 1 / 60;
+    if (_dt > 0.05) _dt = 0.05;
+    var _h = _dt / 4;
+    for (var _s = 0; _s < 4; _s++) global.phys_v28_sub(_h);
+    if (p.vx < 0) p.vx = 0;
+    if (p.vx > 150) p.vx = 150;
+    kmh = p.vx * 3.6;
+    rpm = p.omega * 9.5492965855;
+    if (rpm < 0) rpm = 0;
+    global.phys = _bak_p;
+    global.torque = _bak_tq;
+    if (_had_mt) global.maxtorque = _bak_mt;
+    global.phys_ai_run = 0;
+    global.phys_ai_spec = undefined;
+    return 1;
+};
 ");
 g.QueueAppend("gml_Object_obj_player_Step_0", @"
+// o objeto do menu so era criado na Garage. na rua o clique direito nao tinha alvo.
+if (variable_global_exists(""car_data"") && is_array(global.car_data) && global.vehicles_array >= 0 && global.vehicles_array < array_length(global.car_data)) {
+    var _ntspawn = global.car_data[global.vehicles_array];
+    if (variable_struct_exists(_ntspawn, ""noguiintech"") && is_real(_ntspawn.noguiintech) && _ntspawn.noguiintech != 0 && variable_struct_exists(_ntspawn, ""vignicao"") && !instance_exists(obj_noguiintech)) {
+        instance_create_layer(0, 0, ""System"", obj_noguiintech);
+    }
+}
 if (variable_global_exists(""phys_v28_on"") && global.phys_v28_on) {
     if (variable_global_exists(""phys_moved"") && global.phys_moved) {
         // a funcao nasceu na room Start e nao enxerga as variaveis do player.
@@ -3625,6 +4008,17 @@ g.QueueFindReplace("gml_Object_obj_player_Step_0", "    if (global.rpm > 0)\n   
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (room == Drag || room == Rua || room == Autodromo || room == Online_Rua || room == Online_Autodromo)\n{\n    if (launch_activ == 0)\n    {\n        move = key_down - key_up;\n        hspd = global.kmh / 2.7;", "if (room == Drag || room == Rua || room == Autodromo || room == Online_Rua || room == Online_Autodromo)\n{\n    if (launch_activ == 0)\n    {\n        move = key_down - key_up;\n        global.phys_kmh_used = global.kmh;\n        global.phys_moved = 1;\n        global.phys_scroll = 0;\n        hspd = global.kmh / 2.7;", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "if (room == Avenida)\n{\n    move = key_down - key_up;\n    hspd = global.kmh / 2.7;", "if (room == Avenida)\n{\n    move = key_down - key_up;\n    global.phys_kmh_used = global.kmh;\n    global.phys_moved = 1;\n    global.phys_scroll = 1;\n    hspd = global.kmh / 2.7;", false);
 g.QueueFindReplace("gml_Object_obj_player_Step_0", "            hspd = 0;\n            global.kmh = 0;\n        }\n        if (room == Autodromo && global.kmh > 100)", "            hspd = 0;\n            global.kmh = 0;\n            global.phys_hit = 1;\n        }\n        if (room == Autodromo && global.kmh > 100)", false);
+// ECU de injecao nao pode reescrever giro nem torque de carro carburado:
+// o ponto e do distribuidor, e esse desconto deixava o giro cravado em 800
+// com a roda ja andando.
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "global.torque *= (1 + bonus_ignicao_torque);",
+    "if (!(variable_global_exists(\"fuel_model_on\") && global.fuel_model_on && global.mod_dist_tipo(global.car_data[global.vehicles_array]) == 1)) global.torque *= (1 + bonus_ignicao_torque);",
+    false);
+g.QueueFindReplace("gml_Object_obj_player_Step_0",
+    "global.rpm = min(global.rpm * power(mult_rpm, global.dt), global.car_data[global.vehicles_array].rpm);",
+    "if (!(variable_global_exists(\"fuel_model_on\") && global.fuel_model_on && global.mod_dist_tipo(global.car_data[global.vehicles_array]) == 1)) global.rpm = min(global.rpm * power(mult_rpm, global.dt), global.car_data[global.vehicles_array].rpm);",
+    false);
 
 g.QueueFindReplace("gml_GlobalScript_GetNameParts",
     @"        default:

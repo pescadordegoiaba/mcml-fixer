@@ -717,6 +717,11 @@ faixa de velocidade: a curva é contínua.
 O Cd (`global.cx`) e a área (`global.area_frontal`) já vêm do jogo por carro
 (`GetCar.gml`: Cd 0,25–0,6 e A 1,8–2,3 m²).
 
+## 14. Fase 2 do combustível
+
+Bomba de aceleração, afogador, dano de knock, IAT do cofre e a curva de 8
+pontos estão em `mod/MOD.md`. A chamada de `fuel_sys_step` não mudou.
+
 ### Consequência: o teto é a potência
 
 `½·ρ·CdA·v³ = P` → `v = ∛(2P/(ρ·CdA))`:

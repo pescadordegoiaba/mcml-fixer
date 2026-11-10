@@ -364,7 +364,12 @@ def _engine_torque(car, throttle_eff, dt=0.0):
     if not pt.engine_stalled:
         t_comb = float(car.torque_fn(w_to_rpm(pt.omega_eng), throttle_eff))
         if car.fuel is not None:
+            car.fuel.vx = car.chassis.vx
+            car.fuel.engine_on = (not pt.engine_stalled) and bool(car.inputs.ignition)
             t_comb *= fuel_step(car.fuel, w_to_rpm(pt.omega_eng), throttle_eff, dt)
+            if car.fuel.engine_failure_pending:
+                pt.engine_stalled = True
+                t_comb = 0.0
         if pt.omega_eng > pt.redline:
             cut = clamp((pt.omega_eng - pt.redline) / (0.08 * pt.redline), 0.0, 1.0)
             t_comb *= (1.0 - cut)
@@ -408,7 +413,7 @@ def _clutch(car, throttle_eff_open_idle_already_applied):
     # omega do eixo driven de referencia (traseiro se houver)
     w_ref = driven[-1].omega_w
     delta = pt.omega_eng - w_ref * g
-    capacity = pt.clutch_engagement * pt.clutch_capacity_max * const.fade_termico
+    capacity = _held_capacity(pt, pt.clutch_engagement * pt.clutch_capacity_max * const.fade_termico)
 
     slip = pt.force_slip_next or abs(delta) > const.eps_clutch or abs(pt.t_load_eng) > capacity
     pt.force_slip_next = False
@@ -454,9 +459,9 @@ def _integrate_engine(car, dt):
         coeff = dt * (1.0 / i_e + (g * k) / i_w)
         rhs = delta + pt.t_eng * dt / i_e + g * t_ext * dt / i_w
         t_sync = rhs / coeff if coeff > 1e-12 else 0.0
-        if abs(delta) < 1e-9:
-            pt.t_clutch = 0.0
-        elif sgn(t_sync) == sgn(delta) and abs(t_sync) <= abs(pt.t_clutch):
+        # delta ~ 0 e sobrecarga: o torque da embreagem ja veio de _clutch.
+        # zerar aqui deixava a marcha longa sem forca, com o giro colado na roda.
+        if abs(delta) >= 1e-9 and sgn(t_sync) == sgn(delta) and abs(t_sync) <= abs(pt.t_clutch):
             pt.t_clutch = t_sync
         pt.omega_eng = max(0.0, pt.omega_eng + ((pt.t_eng - pt.t_clutch) / i_e) * dt)
         # se este T zera o delta, crava a roda no motor e nao deixa o passo 9 cruzar
@@ -475,7 +480,7 @@ def _integrate_engine(car, dt):
     i_eq = i_e + i_w / (g * g)
     domega = (pt.t_eng - pt.t_load_eng) / i_eq
     pt.t_clutch = pt.t_eng - i_e * domega
-    capacity = pt.clutch_engagement * pt.clutch_capacity_max * car.const.fade_termico
+    capacity = _held_capacity(pt, pt.clutch_engagement * pt.clutch_capacity_max * car.const.fade_termico)
     if abs(pt.t_clutch) > capacity + 1e-6:
         pt.force_slip_next = True
         pt.t_clutch = clamp(pt.t_clutch, -capacity, capacity)
@@ -491,14 +496,24 @@ def _integrate_engine(car, dt):
             a.projected = True
 
 
-def _lock_driveline(car):
-    """Pe fora da embreagem e pneu grudado: o giro nao foge da marcha.
+def _held_capacity(pt, base):
+    """Pe fora, a embreagem segura motor e carga. Sem isso a marcha longa
+    entra em slip com delta ~ 0, o torque zera e velocidade e giro travam."""
+    cap = base
+    if pt.clutch_engagement >= 0.9:
+        cap = max(cap, abs(pt.t_eng) * 1.2, abs(pt.t_load_eng) * 1.2)
+    return cap
 
-    So corta o excesso com o carro ja andando. Parado, um snap para a lenta
-    apagava o torque da largada.
+
+def _lock_driveline(car):
+    """Pe fora, embreagem grudada e pneu no chao: o giro e o da marcha.
+
+    Roda depois que o chassi ja andou neste passo. Nao crava na lenta
+    (a roda saia e o conta-giros ficava em 800) e nao corta o giro enquanto
+    a embreagem ainda esta patinando.
     """
     pt = car.pt
-    if pt.clutch_engagement < 0.9 or pt.engine_stalled:
+    if pt.clutch_mode != "stick" or pt.clutch_engagement < 0.9 or pt.engine_stalled:
         return
     g = car.ratio()
     driven = car.driven_axles()
@@ -510,8 +525,8 @@ def _lock_driveline(car):
     if abs(car.chassis.vx) < 2.2:
         return
     target = (car.chassis.vx / ax.radius) * g
-    if pt.omega_eng > target + rpm_to_w(400.0):
-        pt.omega_eng = max(car.const.omega_idle, target)
+    if target > car.const.omega_idle:
+        pt.omega_eng = target
         ax.omega_w = car.chassis.vx / ax.radius
 
 
@@ -874,11 +889,11 @@ def substep(car, dt):
     # 9 roda + freio
     _brake_integrate(car, car.front, t_front, dt)
     _brake_integrate(car, car.rear, t_rear, dt)
-    _lock_driveline(car)
 
     # 10-11 chassi
     a_x, az, alpha = _chassis_forces(car, f_susp_f, f_susp_r)
     _integrate_chassis(car, a_x, az, alpha, dt)
+    _lock_driveline(car)
 
     # 12 DOF dianteiro
     _integrate_front_dof(car, f_susp_f, dt)
@@ -920,6 +935,11 @@ def step(car, dt):
     """dt em segundos. Ate n_sub substeps (teto da spec: 4)."""
     if dt <= 0.0:
         return
+    # afogador sobe a lenta. motor quente (padrao) nao mexe em omega_idle.
+    if car.fuel is not None and car.fuel.choke_active:
+        car.const.omega_idle = rpm_to_w(800.0 + 300.0)
+    elif car.fuel is not None:
+        car.const.omega_idle = rpm_to_w(800.0)
     n = car.n_sub
     if n < 1:
         n = 1

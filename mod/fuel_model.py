@@ -21,6 +21,22 @@ KNOCK_RATE = 3.0       # graus/s de retard
 KNOCK_RECOVER = 1.0    # graus/s de volta
 KNOCK_CAP = 15.0
 
+# fase 2 — transientes. Os defaults deixam o regime permanente igual a fase 1.
+TIP_IN_THRESHOLD = 2.0          # 1/s
+K_IAT_HEAT = 6.0                # °C/s em WOT com o motor no topo da faixa quente
+K_IAT_COOL = 0.08               # 1/s
+KNOCK_DAMAGE_THRESHOLD = 0.7
+KNOCK_DAMAGE_RATE = 0.02        # 1/s em knock 1.0
+KNOCK_RECOVERY_RATE = 0.001     # 1/s, so depois do cooldown limpo
+DAMAGE_COOLDOWN = 60.0
+KNOCK_DAMAGE_TORQUE_PENALTY = 0.3
+CHOKE_TEMP_ON = 40.0
+CHOKE_TEMP_OFF = 60.0
+CHOKE_MIN_TIME = 15.0
+CHOKE_ENRICHMENT = 2.0
+CHOKE_IDLE_BUMP = 300.0
+IDLE_TARGET = 800.0
+
 # kit de molas: 8 pontos (rpm, graus de avanco mecanico)
 SPRINGS = {
     "street": ((800, 0), (1200, 6), (1600, 12), (2000, 17), (2600, 21), (3400, 24), (4500, 24), (6500, 24)),
@@ -152,6 +168,25 @@ class Fuel:
     eff: float = 1.0
     prev_throttle: float = 0.0
     tps_rate: float = 0.0
+    # fase 2. mech_curve None = mola nomeada (street/strip/race), sem mudar o ponto.
+    mech_curve: list | None = None
+    pump_duration: float = 0.35
+    pump_enrichment: float = 2.0
+    accel_timer: float = 0.0
+    accel_shot: float = 0.0
+    accel_delta: float = 0.0
+    choke_active: bool = False
+    choke_timer: float = 0.0
+    engine_on: bool = True
+    injected: bool = False
+    knock_damage: float = 0.0
+    knock_clean: float = 0.0
+    fail_timer: float = -1.0
+    engine_failure_pending: bool = False
+    iat_ambient: float = 40.0
+    vx: float = 0.0
+    idle_target: float = 800.0
+    thr_floor: float = 0.0
 
 
 def _afr_idle(turns):
@@ -190,9 +225,102 @@ def _mapped_rpm(st: Fuel, rpm: float) -> float:
     return 1000.0 + (rpm - st.rpm_ini) * (2200.0 / span)
 
 
+def smoothstep(u):
+    u = clamp(u, 0.0, 1.0)
+    return u * u * (3.0 - 2.0 * u)
+
+
+def preset_curve(name):
+    """Oito pontos da mola nomeada. Street reproduz a curva 1."""
+    return [tuple(p) for p in SPRINGS.get(name, SPRINGS["street"])]
+
+
+def spring_kit_curve(light_start, light_end, heavy_start, heavy_end, max_deg=24.0):
+    """Duas molas em smoothstep. Leve cedo, pesada ate o fim."""
+    rpms = (800.0, 1200.0, 1600.0, 2000.0, 2600.0, 3400.0, 4500.0, 6500.0)
+    span_l = max(1.0, light_end - light_start)
+    span_h = max(1.0, heavy_end - heavy_start)
+    pts = []
+    for r in rpms:
+        ul = smoothstep((r - light_start) / span_l)
+        uh = smoothstep((r - heavy_start) / span_h)
+        pts.append((r, max_deg * (0.45 * ul + 0.55 * uh)))
+    return pts
+
+
+def _iat_step(st: Fuel, throttle, dt):
+    cn = clamp((st.coolant - 80.0) / 40.0, 0.0, 1.0)
+    load = clamp(throttle, 0.0, 1.0)
+    speed = clamp(st.vx / 20.0, 0.2, 1.0)
+    heat = K_IAT_HEAT * cn * load
+    cool = K_IAT_COOL * (st.iat - st.iat_ambient) * speed
+    st.iat = clamp(st.iat + (heat - cool) * dt, st.iat_ambient, st.iat_ambient + 60.0)
+
+
+def _accel_pump(st: Fuel, throttle, dt):
+    if st.injected:
+        st.accel_timer = 0.0
+        st.accel_shot = 0.0
+        st.accel_delta = 0.0
+        return 0.0
+    if st.tps_rate > TIP_IN_THRESHOLD and throttle > 0.1:
+        st.accel_timer = st.pump_duration
+        st.accel_shot = -st.pump_enrichment * max(0.0, throttle - st.prev_throttle)
+    delta = 0.0
+    if st.accel_timer > 0.0 and st.pump_duration > 0.0:
+        delta = st.accel_shot * (st.accel_timer / st.pump_duration)
+        st.accel_timer = max(0.0, st.accel_timer - dt)
+    st.accel_delta = delta
+    return delta
+
+
+def _choke_step(st: Fuel, rpm, dt):
+    if st.injected:
+        st.choke_active = False
+        st.idle_target = IDLE_TARGET
+        st.thr_floor = 0.0
+        return
+    cold = st.coolant < CHOKE_TEMP_ON and ((not st.engine_on) or rpm < IDLE_TARGET * 0.9)
+    if (not st.choke_active) and cold:
+        st.choke_active = True
+    if st.choke_active:
+        st.choke_timer += dt
+        if st.coolant > CHOKE_TEMP_OFF and st.choke_timer > CHOKE_MIN_TIME:
+            st.choke_active = False
+    if st.choke_active:
+        st.afr -= CHOKE_ENRICHMENT
+        st.idle_target = IDLE_TARGET + CHOKE_IDLE_BUMP
+        st.thr_floor = 0.12
+    else:
+        st.idle_target = IDLE_TARGET
+        st.thr_floor = 0.0
+
+
+def _knock_damage_step(st: Fuel, dt):
+    if st.knock > KNOCK_DAMAGE_THRESHOLD:
+        st.knock_damage = min(1.0, st.knock_damage + KNOCK_DAMAGE_RATE * st.knock * dt)
+        st.knock_clean = 0.0
+    elif st.knock <= 0.0:
+        st.knock_clean += dt
+        if st.knock_clean > DAMAGE_COOLDOWN:
+            st.knock_damage = max(0.0, st.knock_damage - KNOCK_RECOVERY_RATE * dt)
+    if st.knock_damage > 0.9:
+        if st.fail_timer < 0.0:
+            st.fail_timer = 30.0
+        else:
+            st.fail_timer -= dt
+            if st.fail_timer <= 0.0:
+                st.engine_failure_pending = True
+    elif not st.engine_failure_pending:
+        st.fail_timer = -1.0
+
+
 def distributor_step(st: Fuel, rpm, dt):
-    curve = SPRINGS.get(st.spring, SPRINGS["street"])
-    st.mech = lookup(curve, _mapped_rpm(st, rpm)) * st.cent_scale
+    if st.mech_curve:
+        st.mech = lookup(st.mech_curve, rpm) * st.cent_scale
+    else:
+        curve = SPRINGS.get(st.spring, SPRINGS["street"])
+        st.mech = lookup(curve, _mapped_rpm(st, rpm)) * st.cent_scale
     st.vac = 0.0
     if st.vacuum_on and st.map_bar < MAP_ATM:
         st.vac = st.max_vac * (1.0 - st.map_bar / MAP_ATM)
@@ -225,8 +353,17 @@ def fuel_step(st: Fuel, rpm, throttle, dt):
     if dt < 0.0:
         dt = 0.0
     st.tps_rate = (throttle - st.prev_throttle) / dt if dt > 1e-6 else 0.0
+    _iat_step(st, throttle, dt)
     distributor_step(st, rpm, dt)
     carb_step(st, rpm, throttle)
+    if not st.injected:
+        st.afr += _accel_pump(st, throttle, dt)
+        _choke_step(st, rpm, dt)
+    else:
+        st.accel_delta = 0.0
+        st.choke_active = False
+        st.idle_target = IDLE_TARGET
+        st.thr_floor = 0.0
     # a eficiencia deste passo usa o AFR que o distribuidor viu (anterior).
     # recalcula com o AFR novo para o torque deste passo: o lag de AFR seria
     # 1 substep e o torque precisa do circuito que acabou de abrir (WOT).
@@ -234,6 +371,8 @@ def fuel_step(st: Fuel, rpm, throttle, dt):
     e_a = eff_afr(st.afr)
     st.mbt = mbt_at(rpm, st.map_bar)
     st.eff = max(0.25, e_t * e_a * (1.0 - 0.4 * st.knock))
+    st.eff = max(0.05, st.eff * (1.0 - st.knock_damage * KNOCK_DAMAGE_TORQUE_PENALTY))
+    _knock_damage_step(st, dt)
     st.prev_throttle = throttle
     return st.eff
 
