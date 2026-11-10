@@ -1,327 +1,341 @@
 # mcml-fixer
 
-CLI + GUI em Rust (egui/eframe) que faz **My Car My Life** (GameMaker Studio
-1.4, YoYo Linux Runner V1.3) rodar direito em Linux moderno: launch, resolução,
-cursor e a UI do PC simulado dentro do jogo — e que instala o **mod
-Distribuidor + Carburador** dentro do `game.unx`.
+CLI e GUI em Rust (egui/eframe) para **My Car My Life** no Linux. O jogo é
+GameMaker. O fixer faz duas coisas:
 
-Tudo é aplicável e revertível, sempre com backup, e sem alterar nada fora da
-pasta do jogo.
+1. Abre o jogo em Linux moderno: bibliotecas, resolução, cursor e a interface
+   do PC dentro do jogo.
+2. Instala um mod dentro do `game.unx`: física longitudinal, câmbio,
+   distribuidor, carburador, forja e a regra do Noguiintech.
 
-## Os bugs que isto conserta
+Tudo que o fixer grava no jogo tem backup e desfaz. Nada é escrito fora da
+pasta do jogo, do `~/.config` e do cache do UndertaleModTool.
 
-Seis são de **plataforma** (o jogo não abre ou não responde):
+O detalhe de cada solda no bytecode está em [`docs/MOD.md`](docs/MOD.md). A
+fase 2 do combustível está em [`mod/MOD.md`](mod/MOD.md). Este README explica
+o comportamento.
 
-| # | Sintoma | Causa raiz | Correção |
-|---|---|---|---|
-| 1 | o jogo não abre | libs de ABI antiga (`OpenSSL 1.0`, `libcurl-gnutls`) ausentes no sistema | copia 8 `.so` do Steam Runtime (o binário tem `RPATH=$ORIGIN`) |
-| 2 | imagem esticada, input deslocado | janela vem do `GEN8` do `game.unx`, device vem do `.data` do runner — valores independentes | `--native-res` grava **os dois** |
-| 3 | clique ~20 px fora do cursor | hotspot do `spr_mouse` no centro (256,256), ponta da chave em (332,1) | origin → (332,1) |
-| 4 | cursor do sistema em vez do cursor do jogo | `obj_mouse` nunca era instanciado em nenhuma room | `Persistent` + `instance_create_depth` |
-| 5 | barra de tarefas do PC não responde | testa clique em GUI mas desenha em room; a GUI herdava o tamanho da **janela** (1280x1024) e não da view (1280x720) | `display_set_gui_size(1280,720)` |
-| 6 | barra e botões do app XLO não aparecem | o passe CRT recorta a `application_surface` com coordenadas fixas 1280x720, mas a surface é 1280x1024 — recorta a metade de cima e redesenha por cima | escala a origem do recorte pela razão surface/design |
+## Instalar e tirar o mod
 
-Outros doze vieram da varredura do decompilado — punições escondidas por tunar,
-`carburador = -1` derrubando o F6, item de câmbio sem `use_func`, e por aí. Todos
-os 18 estão catalogados com evidência em **[`docs/BUGS.md`](docs/BUGS.md)**.
-
-## Documentação
-
-- [`docs/BUGS.md`](docs/BUGS.md) — os 28 bugs, com as contas que explicam cada um
-  e duas armadilhas de processo (GML de escopo de evento e o checksum do GEN8 no
-  UTMT).
-- [`docs/MOD.md`](docs/MOD.md) — o mod por dentro: física, distribuidor,
-  carburador, motor, câmbios, loja, menu F6 e configuração.
-- [`docs/RESEARCH.md`](docs/RESEARCH.md) — achados da varredura do decompilado
-  (funções mortas, punições, o que foi descartado e por quê).
-- [`docs/DEV.md`](docs/DEV.md) — **opções ocultas** (dinheiro).
-- [`docs/SOURCE.md`](docs/SOURCE.md) — passeio pela source inteira: constantes,
-  cada função, os scripts CSX embutidos, fluxo de dados, GUI e artefatos em
-  runtime.
-
-Varredura reproduzível: `python3 tools/scan.py`.
-
-## O mod (motor, distribuidor, carburador, câmbios)
-
-Mod de conteúdo aplicado **dentro** do `game.unx`, com backup e marcador:
+O `--mod-install` sempre parte de `assets/game.unx.orig`. O UndertaleModTool
+recusa um `game.unx` que já foi alterado. Se o mod já está instalado, o
+comando recusa. A ordem para atualizar é desinstalar e instalar de novo.
 
 ```bash
-mcml-fixer --mod-install                 # aplica (backup automatico)
-mcml-fixer --mod-check                   # 69 marcadores dentro do decompilado
-mcml-fixer --mod-status                  # estado + caminho do ini
-mcml-fixer --mod-set ganho=100 dwell=48  # grava defaults para carros novos
-mcml-fixer --mod-uninstall               # restaura o backup
+cargo build --release
+./target/release/mcml-fixer --mod-uninstall
+./target/release/mcml-fixer --mod-install
+./target/release/mcml-fixer --mod-check
 ```
 
-### Distribuidor
-
-Peça real do carro (`car.distribuidor` 0/1/2) com física de avanço:
-
-```
-avanço = inicial + centrífugo(rpm, 2 estágios) + vácuo(MAP, 5–15 inHg)
-```
-
-O bônus segue a mesma curva por partes que o jogo usa na ignição dos carros
-com ECU, e é aplicado **no mesmo lugar**:
-
-```gml
-if (global.mod_dist_ativo) {
-    global.torque *= global.mod_dist_fator();          // igual ao nativo
-    global.ignicao = global.mod_dist_estado.avanco;    // ignição de verdade
-}
-```
-
-Ou seja: mexe em torque (aceleração, dinamômetro, HUD) e na ignição, não só num
-número de tela. Dois modelos com limites próprios:
-
-| | Original | Competição |
-|---|---|---|
-| avanço inicial | 0–12° | 0–20° |
-| centrífugo | 0–20° | 0–30° |
-| rpm de fim | 5500 | 7500 |
-| vácuo | 0–14° | 0–20° |
-| dwell | 38–52 | 30–60 |
-| ganho máximo | 45% | 100% |
-| preço | $800 (reposição) | $12.000 |
-
-Todo motor **carburado** sai de fábrica com o Original; injetado não recebe.
-
-### Carburador
-
-O jogo já tinha `gicle`, `gicle_2nd` e oito tipos de carburador. O mod soma os
-circuitos que faltavam **na linha do desvio de mistura**, então tudo que o
-jogo já faz (hp, torque, aquecimento por mistura rica, corte por mistura
-pobre) passa a reagir:
-
-| Parâmetro | Faixa | Onde age |
-|---|---|---|
-| Giclê de lenta | 20–60 | abaixo de 8% do giro |
-| Agulha (média) | 20–80 | pico em 45% do giro |
-| Borboleta | 0–100 | saída / baixa |
-
-Efeito medido nas fórmulas nativas (gasolina, carburador tipo 5):
-
-```
-cenario                   AFR     hp    torque
-neutro, 3000rpm         13.52  1.039  0.722
-agulha +10              12.14  1.146  0.796   <- melhor
-agulha +20              10.76  1.011  0.702   <- passou, afogou
-agulha -10              14.90  0.904  0.628
-lenta +10                9.95  0.927  0.644
-lenta -10               17.38  0.671  0.466
-```
-
-### Potência real (torque × rpm)
-
-`hp` deixou de ser uma curva escrita à mão: agora é derivado do torque
-instantâneo e do giro, `P = T · ω`, e é isso que o jogo usa para acelerar —
-no jogador e nos cinco objetos de IA (trânsito, touge, oponentes, NPC).
-
-```gml
-hp = clamp(global.pot_hp(torque, rpm, maxtorque, max_rpm, maxhp), 0, maxhp * 1.2);
-```
-
-A constante é calibrada por motor para o pico de `torque·rpm` cair exatamente
-no `maxhp` declarado (medido em 45, 99 e 171 hp). Efeito prático: a curva fica
-pontuda como motor de verdade — mais fraca embaixo, igual no pico e mais forte
-no corte.
-
-```
-rpm      45 hp   99 hp   171 hp
-1500       9,2    18,6     45,6
-3000      32,2    64,5    134,7
-4200      44,9    98,3    170,5   <- pico
-5500      37,4    91,1    142,0
-```
-
-Como o torque já carrega carburador, distribuidor e mods de motor, a potência
-acompanha tudo sem código extra.
-
-### Física do trem de força (base: Rigs of Rods)
-
-A aceleração deixou de ser um número por marcha. O carro puxa por
-`F = T · g / r` (torque, câmbio, raio da roda), limitado por `μ · m · g` e pelo
-`phys_slip` — o excesso de força vira patinação proporcional em vez de ser
-cortado por um teto. Ajustável em `--phys raio=… mu=… share=… embreagem=…
-inercia=…` e aplicado também nos cinco objetos de IA.
-
-### Câmbios de 7 e 8 marchas
-
-Dois câmbios novos pelo caminho nativo do jogo (`car.cambio` 8 e 9):
-
-| Câmbio | Razões | Preço | Teto a 6000 rpm |
-|---|---|---|---|
-| Manual 7 marchas | 9.35, 6.2, 4.5, 3.5, 2.75, 2.15, 1.7 | $45.000 | 211,8 km/h |
-| Manual 8 marchas | 9.35, 6.4, 4.9, 3.8, 3.0, 2.4, 1.9, 1.55 | $85.000 | 232,3 km/h |
-
-Instalam no fluxo nativo: oficina do Tião (dinamômetro) → inventário → clicar no
-câmbio → `use` → confirmar. As 8 marchas ficam ajustáveis no caderno do "Forjar
-Câmbio", que passou a desenhar 8 linhas sem sobrepor o custo.
-
-No mesmo caderno, cada marcha varia **±70% do valor original** (antes era ±0,2 da 5ª
-em diante) e existe uma linha de **relação final** (2,60–5,10, default 3,73 = neutro)
-— menor = mais velocidade final, maior = mais arrancada. O teto de velocidade subiu de
-400 para 500 km/h (`[cambio] vmax`).
-
-### Menu
-
-`F6` abre · `TAB` cicla Ajuste → Loja → Carburador · `↑↓` escolhe · `←→`
-ajusta · `1`/`2` compram · `3` volta ao original · `F7` padrão.
-
-Cada parâmetro traz duas linhas de explicação e, no distribuidor,
-**mín / atual / máx** calculados rodando o modelo com o parâmetro nos extremos.
-
-A loja fica no **TOTORTO**, categoria própria no fim da lista (índice 18), com
-os dois itens e entrega normal do jogo. O detalhe completo está em
-[`docs/MOD.md`](docs/MOD.md).
-
-## Como funciona por dentro
-
-Os patches que não são bytes (sprite, flag de objeto, código GML) passam pelo
-**UndertaleModCli**, que edita o `game.unx` com o serializador oficial do
-formato — nada de byte-patch de bytecode. Dois scripts CSX ficam embutidos no
-binário: `PATCH_CSX` (aplica) e `CHECK_CSX` (só lê e confere).
-
-O `--data-fix` sempre parte de `assets/game.unx.orig`, porque o UTMT recusa
-arquivo com o `GEN8` alterado (o checksum do chunk usa
-`DefaultWindowWidth/Height`).
-
-O GML do mod não é escrito à mão dentro do CSX: fica em `mod/gen_mod.py` (blocos
-GML + `QueueFindReplace`) e o `mod/build.py` gera o `mod/mod_dist2.csx` e injeta
-no `src/main.rs`. Depois de mexer em qualquer patch:
+Depois de editar `mod/gen_mod.py`, `mod/phys_v28.gml` ou `mod/fuel_model.gml`:
 
 ```bash
 python3 mod/build.py && cargo build --release
 ```
 
-## Compilar
+`mod/build.py` gera `mod/mod_dist2.csx` e embute esse texto em `src/main.rs`.
+Não edite o `.csx` nem o `main.rs` à mão.
+
+Testes, sem o jogo:
 
 ```bash
-cargo build --release
-# binário: target/release/mcml-fixer
+python3 tools/verify_phys_v28.py    # rua ~500 hp, sem modelo de combustível
+python3 tools/verify_fuel_model.py  # distribuidor, carburador e fase 2
 ```
 
-## GUI
+O gate da rua é 60 pés entre 1,9 e 2,1 s, quarto de milha entre 11,5 e 12,0 s,
+trap perto de 190 km/h. A última passagem ficou em 2,00 s, 11,51 s e 194 km/h.
+Com o modelo de combustível ligado, o mesmo quarto ficou em 1,95 s e 11,66 s.
 
-```bash
-mcml-fixer
+## O que o mod muda no carro
+
+| Sistema | Onde mexe | O que o jogador vê |
+|---|---|---|
+| Física v2.8 | jogador e NPCs | aceleração, giro, pneu, arrasto e o topo da marcha |
+| Câmbio `cg` | caderno do Tião | relações efetivas, relação final, ±70% |
+| Forja | oficina do Tião | peças internas duram 1,7× |
+| Distribuidor e carburador | F6, só carburado | ponto, mistura, bomba, afogador, curva |
+| Noguiintech | peça no carro | o motor vira injetado e o F6 não abre |
+
+Peso do jogador no jogo está em toneladas. A física multiplica por 1000. Nos
+NPCs o peso já está em kg.
+
+## Física v2.8
+
+O integrador está em `mod/phys_v28.py` (referência) e `mod/phys_v28.gml`
+(o que entra no jogo). É longitudinal: força no sentido do carro, pitch e a
+roda dianteira solta. Não há força lateral nova. A ré continua no modelo
+antigo do jogo.
+
+Cada passo de física tem quatro subpassos. A ordem e o atraso de um subpasso
+fazem parte do modelo. Não reordene.
+
+O torque de combustão vem de `global.torque`. Se o modelo de combustível está
+ligado, esse torque é multiplicado pela eficiência do distribuidor e do
+carburador (`fuel_sys.eff`). O corte de giro tira torque acima da linha
+vermelha. Não corta a velocidade por conta própria: a velocidade para porque
+o giro chegou no corte daquela marcha, ou porque o arrasto igualou o empuxo.
+
+Arrasto do jogador: `Cd` e área frontal do próprio carro, com piso de CdA 0,30.
+Nos NPCs o CdA fica em 1,30.
+
+### Relação e topo da marcha
+
+O número que o caderno mostra é a razão do jogo, a mesma de
+`_gearlimit = (rpm / razão) × 60 / 1000`.
+
+```
+topo em km/h = (rpm de corte / razão) × 0,06
+rpm           = km/h × razão × 16,6667
 ```
 
-- Detecta a instalação do Steam automaticamente (ou use "Detectar").
-- Status ao vivo: binário, `ldd` sem `not found`, GEN8, canvas, Steam Runtime,
-  gamescope.
-- Botões: **Corrigir libs**, **Reverter libs**, **Salvar escolha**, **Jogar**,
-  **Aplicar cursor + GUI**, além do patch estático opcional do GEN8.
+| Razão | 4800 rpm | 6000 rpm |
+|---|---|---|
+| 8,0 (primeira curta de fábrica) | 36 km/h | 45 km/h |
+| 3,0 | 96 km/h | 120 km/h |
+| 2,0 | 144 km/h | 180 km/h |
 
-## CLI (mesmo binário, sem GUI)
+A física converte essa razão para radiano do motor por radiano da roda com
+`razão × raio × 2π`. Com a embreagem acoplada, o conta-giros e o hodômetro
+caem na mesma conta do caderno.
+
+Com o pé fora da embreagem, sem freio e sem line-lock:
+
+- o giro não fica abaixo da lenta
+- assim que a marcha pede mais que a lenta, o giro é a velocidade vezes a razão
+- a velocidade não passa do corte dessa razão
+
+Uma primeira em 3,0 num carro fraco, em um segundo, fica perto de 20 km/h e
+uns 1100 rpm. Os 6000 rpm só aparecem no topo, 120 km/h se o corte do motor
+for 6000. Uma primeira de fábrica perto de 8 continua curta: o corte chega
+cedo e a velocidade para ali.
+
+Um lançamento com a embreagem ainda patinando (o giro já entrou no passo mais
+de 500 rpm acima da marcha) não é puxado de volta para a lenta. Isso preserva
+a largada do quarto de milha.
+
+### Embreagem
+
+Pé fora, a capacidade cobre o torque do motor e a carga que a marcha devolve.
+Sem isso, uma marcha longa entrava em patinação com o giro já igual ao da
+roda, o torque na roda ia a zero e o carro travava com o conta-giros colado.
+
+Pé dentro, o motor pode subir livre. O timer `clutch` do jogo também abre a
+embreagem durante a troca.
+
+### NPCs
+
+`obj_ia_car`, `obj_ia_car_TOUGE`, `obj_ia_opponent` e `obj_ia_car_NPC` usam o
+mesmo integrador, cada um com o próprio estado (`ai_phys`). Massa, tração,
+pneu, relações, torque e corte saem da instância. O passo do NPC não mexe no
+estado nem no AFR do jogador. Se a física estiver desligada, ou se faltar
+relação e velocidade, continua o lerp antigo do jogo.
+
+Curva e ré dos NPCs continuam no modelo antigo. Um limitador de tráfego que
+corte a velocidade ainda vale: no quadro seguinte o integrador acompanha.
+
+## Câmbio
+
+`global.cg_init_car` é o único lugar que escreve `gear_ratios`,
+`original_ratios` e `max_gears`. `car.gears_mod` guarda a razão efetiva, a
+mesma que a física lê. Não multiplique a relação final de novo por cima disso.
+
+O caderno do Tião:
+
+- carrega a caixa que está no carro
+- ao mudar a relação final, escala as marchas junto
+- valida contra o original na relação nova, janela de ±70% mais 0,06
+- não cobra de novo uma caixa que só foi reaberta
+- `cambio_mod` não é zerado: essa flag é a que mostra a opção de câmbio na oficina
+
+Relação final de 2,60 a 5,10. O neutro de fábrica é 3,73. Menor alonga, maior
+encurta. Há câmbio manual de 7 marchas ($45.000) e de 8 ($85.000).
+
+Andando, o canto superior esquerdo mostra marcha, rpm, razão, topo teórico e
+km/h.
+
+## Forja
+
+Na oficina do Tião, entre Revisar e Câmbio: **Forjar peças internas no motor**.
+Custa $2500. É uma flag, `car.forja_motor`. Pistão, biela, virabrequim, bloco,
+cabeçote e comando passam a ter 70% a mais de vida: o dano dessas peças é
+multiplicado por `1/1,7`. O câmbio não entra. O dano de calor entre 140 °C e
+150 °C também não.
+
+## Noguiintech
+
+`car.noguiintech` diferente de zero, ou `bicos > 0`, classifica o motor como
+injetado antes de olhar o carburador. Efeito:
+
+- o F6 não abre; se estava aberto, fecha
+- avanço, retardo, vácuo, curva, giclê, voltas da lenta e power valve não entram no cálculo
+- o ponto é o da ECU (`global.ignicao`, entre 0° e 55°)
+- a mistura volta a ser a da injeção, e o wideband mostra lambda
+- o torque e o giro da ECU do Noguiintech continuam valendo
+
+Um carburado de fábrica, sem Noguiintech e sem bicos, continua com distribuidor,
+carburador e o menu F6. `global.fuel` continua sendo o tipo de combustível
+(gasolina, etanol…). O estado do modelo é `global.fuel_sys`.
+
+## Distribuidor e carburador
+
+Só com `global.fuel_model_on` e o carro ainda carburado. A chamada não mudou:
+`fuel_sys_step(rpm, throttle, dt)`. O retorno é a eficiência que multiplica o
+torque.
+
+O ponto comandado no carburado é:
+
+```
+base + centrífugo × escala + vácuo + avanço extra − retardo
+```
+
+O knock ainda tira grau depois disso. Os padrões (12° de vácuo no menu, 22° de
+centrífugo, curva 1) reproduzem o modelo antigo. O passo do F6 é quatro vezes
+mais fino que o primeiro menu.
+
+| Ajuste | Passo | Faixa |
+|---|---|---|
+| Avanço inicial | 0,25° | limites do modelo |
+| Centrífugo | 0,5° | 0 até o limite |
+| RPM de início e de fim | 25 rpm | 600–4000 e 1200 até o limite |
+| Curva | 0,25 | 0 rua, 1 mista, 2 pista |
+| Vácuo | 0,25° | 0 até o limite |
+| Avanço extra e retardo | 0,25° | 0–15° |
+| Giclê | 0,25 | 60–100 |
+| Voltas da lenta | 0,0625 | 1–4 |
+| Power valve | 0,125 inHg | 3,5–10,5 |
+
+F6 abre o menu. TAB cicla ajuste, loja e carburador. Setas escolhem e ajustam.
+1 e 2 compram. 3 volta o distribuidor ao original. F7 restaura o padrão. F8,
+na aba do distribuidor, abre a curva de 8 pontos.
+
+### Fase 2
+
+Isto só aparece quando o tempo anda. No regime permanente, com acelerador
+firme, motor quente e curva automática, AFR e ponto ficam os da fase 1.
+
+| Peça | Comportamento | Onde se mexe |
+|---|---|---|
+| Bomba de aceleração | tip-in acima de 2/s enriquece e o extra some em linha. Padrão: 2 pontos de AFR em 0,35 s | F6, carburador |
+| Afogador | liga abaixo de 40 °C com o motor parado ou a lenta baixa. AFR −2 e lenta em 1100 rpm. Desliga acima de 60 °C depois de 15 s | automático |
+| Dano de knock | sobe 0,02/s com knock acima de 0,7. No máximo tira 30% do torque. Acima de 0,9 o motor apaga em até 30 s. Recupera 0,001/s depois de 60 s limpos | automático, gravado em `car.fuel_phase2` |
+| IAT | o ar do cofre esquenta com motor quente em carga e esfria com a velocidade. Parado, a 100 °C e em WOT, sobe cerca de 28 °C em 10 s | automático |
+| Curva de 8 pontos | F8. 1 Street, 2 Strip, 3 Race, 0 volta para a mistura automática | F6 |
+| Kit de molas | na mesma tela F8. Quatro valores reescrevem os 8 pontos | F6 |
+
+Motor injetado não usa bomba, afogador nem a curva. IAT e dano de knock valem
+nos dois. Telemetria: `global.telemetry_afr`, `telemetry_timing`,
+`telemetry_knock`, `telemetry_accel_pump`, `telemetry_accel_afr_delta`,
+`telemetry_choke_active`, `telemetry_knock_damage`, `telemetry_iat`.
+
+## Menu e teclas do mod
+
+| Tecla | Função |
+|---|---|
+| F6 | abre ou fecha o menu. Não abre com Noguiintech ou bicos |
+| TAB | ajuste, loja, carburador |
+| setas | escolhe a linha e muda o valor |
+| 1 e 2 | compram distribuidor, na loja |
+| 3 | tira o distribuidor |
+| F7 | padrão do modelo ou do carburador |
+| F8 | editor da curva de avanço, na aba do distribuidor |
+
+O Noguiintech do jogo continua no clique direito (menu) e no clique do meio
+(painel). O objeto passa a existir também fora da garagem quando a peça está
+no carro. Na garagem o motor precisa estar ligado, senão o jogo fecha o menu.
+
+## Como o patch entra no jogo
+
+Os patches de sprite, flag e GML passam pelo UndertaleModCli. Dois scripts
+CSX vão embutidos no binário: um aplica, o outro só confere.
+
+O GML mora em `mod/gen_mod.py`. Cada `QueueFindReplace` descompila o bytecode
+atual, troca o texto e recompila. Uma âncora que não existe não faz nada e
+não avisa. A mesma entrada, no replace seguinte, já está redecompilada: um
+segundo `var` no mesmo nome some. A âncora tem de casar com esse texto.
+
+`--data-fix` e `--mod-install` partem de `assets/game.unx.orig`.
+
+## Os bugs de plataforma
+
+Seis são do Linux, não do carro:
+
+| # | Sintoma | Correção |
+|---|---|---|
+| 1 | o jogo não abre | copia 8 `.so` do Steam Runtime. O binário tem `RPATH=$ORIGIN` |
+| 2 | imagem esticada, input deslocado | `--native-res` grava a janela no `GEN8` e o device no `.data` do runner |
+| 3 | clique cerca de 20 px fora | origem do `spr_mouse` vai para (332, 1), a ponta da chave |
+| 4 | cursor do sistema | `obj_mouse` persistente e criado na room Languages |
+| 5 | barra de tarefas do PC não responde | `display_set_gui_size(1280, 720)` |
+| 6 | botões do XLO somem | o passe CRT amostra a surface na escala certa |
+
+O catálogo com a conta de cada um está em [`docs/BUGS.md`](docs/BUGS.md).
+
+## CLI
 
 ```bash
-mcml-fixer --check                  # status completo
-mcml-fixer --fix-libs               # aplica o fix de launch
-mcml-fixer --revert-libs            # remove as libs copiadas
-mcml-fixer --native-res 1280x1024   # RESOLUÇÃO NATIVA fixa (binário + GEN8)
-mcml-fixer --revert-native          # restaura binário e game.unx
-mcml-fixer --data-fix               # cursor (hotspot) + cursor do jogo + GUI 1280x720
-mcml-fixer --data-revert            # volta o game.unx de antes do --data-fix
-mcml-fixer --data-check             # confere os patches dentro do game.unx (lento)
-mcml-fixer --patch-gen8 1280x1024   # patch só no GEN8 (cria game.unx.orig)
-mcml-fixer --revert-gen8            # restaura o game.unx
-mcml-fixer --play 1920x1080         # inicia via gamescope
-mcml-fixer --play --no-gamescope    # inicia direto
-mcml-fixer --mod-install            # instala o mod (motor + distribuidor + carburador + fisica)
-mcml-fixer --mod-check              # confere o mod dentro do game.unx
-mcml-fixer --mod-status             # estado do mod + valores do ini
-mcml-fixer --mod-set ganho=80       # defaults do distribuidor (carros novos)
-mcml-fixer --phys raio=0.33 mu=0.85 # defaults da fisica (carros novos)
-mcml-fixer --mod-uninstall          # remove o mod (restaura backup)
+mcml-fixer                              # GUI
+mcml-fixer --check
+mcml-fixer --fix-libs
+mcml-fixer --revert-libs
+mcml-fixer --native-res 1280x1024
+mcml-fixer --revert-native
+mcml-fixer --data-fix
+mcml-fixer --data-revert
+mcml-fixer --data-check
+mcml-fixer --play 1920x1080
+mcml-fixer --play --no-gamescope
+mcml-fixer --mod-install
+mcml-fixer --mod-uninstall
+mcml-fixer --mod-check
+mcml-fixer --mod-status
+mcml-fixer --mod-set ganho=80
+mcml-fixer --phys raio=0.33 mu=0.85
 mcml-fixer --dir "/caminho/do/jogo" --check
 ```
 
-## Patches no `game.unx` (cursor + GUI do PC)
+A GUI detecta a pasta da Steam, mostra libs, GEN8 e gamescope, e tem os
+botões de corrigir libs, cursor, GUI e jogar.
 
-Três correções que **não** são byte-patch, porque mexem em sprite, flag de
-objeto e código GML. Passam pelo `UndertaleModCli`:
+## Resolução
 
-| patch | o que faz | por quê |
-|---|---|---|
-| `spr_mouse` origin → (332,1) | hotspot na ponta da chave | o original era o centro (256,256); a ponta desenhada ficava ~20 px acima do clique |
-| `obj_mouse.Persistent = true` + `instance_create_depth(...)` na room Languages | ativa o cursor próprio do jogo | o objeto existia mas nunca era instanciado, então o jogo usava o cursor do sistema |
-| `display_set_gui_size(1280, 720)` na room Start | GUI no tamanho da view/port | o código do PC testa clique com `device_mouse_*_to_gui()` mas desenha em coordenadas de room; com a GUI herdando o tamanho da janela, a barra de tarefas respondia ~230 px acima do ícone |
-| recorte do passe CRT em `obj_crt_Draw_77` | amostra a `application_surface` com a mesma escala do destino | o código usava 333/109/940/581 fixos (espaço 1280x720) numa surface de 1280x1024: recortava só a metade de cima e redesenha por cima, apagando a barra de tarefas e o rodapé das janelas do PC (botões do XLO) |
+1024×768 não está no `game.unx`. É o default do runner, dois u32 em `.data`
+no offset de arquivo `0x9422f8`. `--native-res` grava esse par e o `GEN8`.
+Sem os dois, a janela e o device nascem de tamanhos diferentes e o clique
+desloca.
 
-O `--data-fix` sempre parte de `assets/game.unx.orig` (o UTMT recusa arquivo com
-GEN8 alterado), guarda o estado anterior em `assets/game.unx.before-datafix.bak`
-e reaplica a resolução nativa no fim.
+O gamescope separa o canvas do jogo do modo do monitor:
 
-Requer o `UndertaleModCli` em `~/.local/share/mcml-fixer/utmt/` (ou aponte com
-`MCML_UTMT=/caminho`). É opcional: sem ele, o resto do fixer funciona igual.
-
-## Resolução nativa fixa — como foi descoberta
-
-O jogo **não** define 1024x768 em lugar nenhum dos dados:
-
-| Onde procurei | Resultado |
-|---|---|
-| `GEN8` | 1280x720 (só a janela) |
-| `OPTN` | sem resolução/fullscreen |
-| `ROOM` (32 rooms) | 640x360 … 2560x720 — **nenhum** 1024x768 |
-| `CODE` (bytecode) | 0 pares de constantes 1024/768, 0 doubles, 0 floats |
-
-Ou seja: 1024x768 é **default do runner**, um inicializador estático em `.data`.
-
-Confirmado com gdb:
-
-```
-(gdb) watch *(int*)0xf422f8
-Old value = 1024
-New value = 1280
-```
-
-`vaddr 0xf422f8` → file offset **0x9422f8** (`.data` em vaddr 0xedb990 / file 0x8db990).
-Lá ficam os dois u32 `(device_w, device_h)` usados por `CreateDesktopWindow` e
-pelo `window_set_size` de boot (`Setting dimensions to %d by %d`).
-
-O patch grava `(w,h)` nesse offset **e** no `GEN8` (senão a janela nasce menor
-que o device). Resultado verificado em 1280x1024:
-
-```
-Display Size(Pixels): 1280,1024
-Setting dimensions to 1280 by 1024
-DeviceWidth/h 1280 by 1024
-ClientWidth/h 1280 by 1024
-RealDeviceWidth/h 1280 by 1024
-Window Size w=1280 h=1024
-Entering main loop.
-```
-
-## Como o fix de resolução funciona
-
-```
+```bash
 gamescope -w 1024 -h 768 -W <SAIDA_W> -H <SAIDA_H> -f -- ./My_Car_My_Life
-        └── canvas (input 1:1) ──┘ └── modo EDID escolhido ──┘
 ```
 
-Modos EDID são lidos de `/sys/class/drm/card*-*/modes` (não do `xrandr`, que
-no XWayland só mostra o modo virtual).
+Os modos saem de `/sys/class/drm/card*-*/modes`. Config em
+`~/.config/mcml-res.json`. Log do último launch em
+`~/.config/mcml-fixer-launch.log`.
 
-## Detalhes de implementação
+## Documentação
 
-- `ldd` para detectar dependências não resolvidas.
-- `fs::copy` segue symlinks, então as libs do Steam Runtime são copiadas como
-  arquivos reais (nunca como links quebrados).
-- Config da resolução em `~/.config/mcml-res.json`.
-- Log da última execução do jogo em `~/.config/mcml-fixer-launch.log`.
-- O jogo é lançado com `setsid`, para continuar vivo depois que o fixer sai.
-- `SIGPIPE` restaurado no modo CLI para não entrar em panic com `| head`.
+| Arquivo | Conteúdo |
+|---|---|
+| [`docs/MOD.md`](docs/MOD.md) | cada `QueueFindReplace`, câmbio, loja, ini |
+| [`mod/MOD.md`](mod/MOD.md) | fase 2: parâmetros, telemetria, validação |
+| [`docs/BUGS.md`](docs/BUGS.md) | bugs de plataforma e de conteúdo, com a evidência |
+| [`docs/DEV.md`](docs/DEV.md) | opções ocultas, inclusive dinheiro |
+| [`docs/SOURCE.md`](docs/SOURCE.md) | passeio pelo fonte do fixer |
+| [`docs/RESEARCH.md`](docs/RESEARCH.md) | o que a varredura do decompilado achou e o que foi descartado |
+
+Varredura do decompilado: `python3 tools/scan.py`.
 
 ## Limitações
 
-- O canvas do jogo é fixo (definido pelos rooms no `game.unx`). "Mudar a
-  resolução" significa mudar a resolução de saída; o jogo é escalado.
-- O patch GEN8 muda só a janela criada no boot — não conserta input sozinho.
-- Sem gamescope, o bug de clique volta quando o display difere do canvas.
+- O canvas do jogo é o dos rooms. Mudar a resolução muda a saída. O jogo é escalado.
+- Sem gamescope, o clique volta a errar quando o monitor não é o canvas.
+- A física nova é longitudinal. Curva e ré ficam no modelo antigo.
+- O dyno e uma corrida completa não são o teste automático. O gate é o Python.
 
 ## Licença
 
-MIT — veja [LICENSE](LICENSE). Sem afiliação com os autores do jogo; a
+MIT. Veja [LICENSE](LICENSE). Sem afiliação com os autores do jogo. A
 ferramenta não distribui nenhum arquivo do jogo.

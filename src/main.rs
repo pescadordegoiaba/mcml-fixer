@@ -3365,6 +3365,7 @@ global.phys_v28_bdemand = function(_a) {
 
 global.phys_v28_sub = function(_dt) {
     var p = global.phys;
+    p.omega_antes = p.omega;
     var _f = p.front;
     var _r = p.rear;
     _f.psi = p.psi_f;
@@ -3618,16 +3619,22 @@ global.phys_v28_sub = function(_dt) {
         p.theta += p.wp * _dt;
         p.vx += _axx * _dt;
         p.ax = _axx;
-        // pe fora e embreagem grudada: o giro acompanha a marcha na velocidade
-        // que este passo acabou de produzir. patinando, o motor pode subir.
-        // abaixo da lenta nao crava: a roda saia com o conta-giros em 800.
-        if (p.eng >= 0.9 && !p.stalled && p.mode == ""stick"" && _g > 0 && abs(p.vx) >= 2.2) {
+        // pe fora: o giro nao ultrapassa a marcha, e o corte e o topo dela.
+        // so corta o que SUBIU neste passo, para um dump ja alto nao cair na lenta.
+        if (p.eng >= 0.9 && !p.stalled && p.mode != ""open"" && _g > 0 && p.brake < 0.2 && !p.hb && !p.lock) {
             var _axl = _r.driven ? _r : _f;
-            if (_axl.stick && _axl.grounded) {
-                var _alvo = (p.vx / _axl.radius) * _g;
-                if (_alvo > p.w_idle) {
+            var _vx_top = (p.red / _g) * _axl.radius;
+            if (p.vx > _vx_top) p.vx = _vx_top;
+            var _alvo = (abs(p.vx) / _axl.radius) * _g;
+            var _teto = max(p.w_idle, _alvo);
+            var _antes = variable_struct_exists(p, ""omega_antes"") ? p.omega_antes : p.omega;
+            // dump ja alto: nao puxa para a lenta. 500 rpm ~ 52 rad/s.
+            if (_antes > _teto + 52) {
+            } else {
+                if (p.omega < p.w_idle) p.omega = p.w_idle;
+                else if (_alvo > p.w_idle) {
                     p.omega = _alvo;
-                    _axl.omega = p.vx / _axl.radius;
+                    _axl.omega = abs(p.vx) / _axl.radius;
                 }
             }
         }

@@ -506,28 +506,38 @@ def _held_capacity(pt, base):
 
 
 def _lock_driveline(car):
-    """Pe fora, embreagem grudada e pneu no chao: o giro e o da marcha.
+    """Pe fora: o giro nao passa da marcha, e o corte e o topo dela.
 
-    Roda depois que o chassi ja andou neste passo. Nao crava na lenta
-    (a roda saia e o conta-giros ficava em 800) e nao corta o giro enquanto
-    a embreagem ainda esta patinando.
+    So puxa o giro para baixo se ele SUBIU alem da relacao neste passo.
+    Um dump que ja estava alto continua livre para a roda alcancar.
     """
     pt = car.pt
-    if pt.clutch_mode != "stick" or pt.clutch_engagement < 0.9 or pt.engine_stalled:
+    if pt.clutch_engagement < 0.9 or pt.engine_stalled or pt.clutch_mode == "open":
+        return
+    inp = car.inputs
+    if inp.brake_pedal > 0.2 or inp.handbrake or inp.line_lock:
         return
     g = car.ratio()
     driven = car.driven_axles()
     if g <= 0.0 or not driven:
         return
     ax = driven[-1]
-    if not (ax.stick_state and ax.grounded):
+    vx_top = (pt.redline / g) * ax.radius
+    if car.chassis.vx > vx_top:
+        car.chassis.vx = vx_top
+    target = (abs(car.chassis.vx) / ax.radius) * g
+    teto = max(car.const.omega_idle, target)
+    before = getattr(pt, "omega_before", pt.omega_eng)
+    # dump: o giro ja entrou no passo bem acima da marcha. nao puxa para a lenta.
+    if before > teto + rpm_to_w(500.0):
         return
-    if abs(car.chassis.vx) < 2.2:
-        return
-    target = (car.chassis.vx / ax.radius) * g
-    if target > car.const.omega_idle:
+    # marcha longa puxava o giro para baixo da lenta e o motor morria.
+    # marcha curta deixava o giro fugir do carro. os dois ficam na relacao.
+    if pt.omega_eng < car.const.omega_idle:
+        pt.omega_eng = car.const.omega_idle
+    elif target > car.const.omega_idle:
         pt.omega_eng = target
-        ax.omega_w = car.chassis.vx / ax.radius
+        ax.omega_w = abs(car.chassis.vx) / ax.radius
 
 
 def _t_wheel_for(car, axle):
@@ -837,6 +847,7 @@ def _integrate_front_dof(car, f_susp_f, dt):
 
 
 def substep(car, dt):
+    car.pt.omega_before = car.pt.omega_eng
     # 1 entradas ja estao em car.inputs (psi aplicado aqui)
     car.front.tire.psi = car.inputs.psi_front
     car.rear.tire.psi = car.inputs.psi_rear
